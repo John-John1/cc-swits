@@ -1,7 +1,8 @@
-import { Github, ShieldCheck } from "lucide-react";
+import { Bot, Github, ShieldCheck } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { Badge } from "@/components/ui/badge";
 import { CopilotAuthSection } from "@/components/providers/forms/CopilotAuthSection";
+import { CodexAutoAuthSection } from "@/components/providers/forms/CodexAutoAuthSection";
+import { Badge } from "@/components/ui/badge";
 
 export function AuthCenterPanel() {
   const { t } = useTranslation();
@@ -22,7 +23,7 @@ export function AuthCenterPanel() {
             <p className="text-sm text-muted-foreground">
               {t("settings.authCenter.description", {
                 defaultValue:
-                  "集中管理跨应用复用的 OAuth 账号。Provider 只绑定这些认证源，不再重复登录。",
+                  "统一管理可跨应用复用的 OAuth 账号。Provider 只绑定这些认证源，不再重复登录。",
               })}
             </p>
           </div>
@@ -49,6 +50,25 @@ export function AuthCenterPanel() {
         </div>
 
         <CopilotAuthSection />
+      </section>
+
+      <section className="rounded-xl border border-border/60 bg-card/60 p-6">
+        <div className="mb-4 flex items-center gap-3">
+          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-muted">
+            <Bot className="h-5 w-5" />
+          </div>
+          <div>
+            <h4 className="font-medium">condex_auto</h4>
+            <p className="text-sm text-muted-foreground">
+              {t("settings.authCenter.codexAutoDescription", {
+                defaultValue:
+                  "管理 OpenAI Codex OAuth 账号，默认账号会同步到 ~/.codex/auth.json，并供官方 Codex 配置复用。",
+              })}
+            </p>
+          </div>
+        </div>
+
+        <CodexAutoAuthSection />
       </section>
     </div>
   );

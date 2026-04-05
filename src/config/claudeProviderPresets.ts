@@ -53,7 +53,8 @@ export interface ProviderPreset {
 
   // 供应商类型标识（用于特殊供应商检测）
   // - "github_copilot": GitHub Copilot 供应商（需要 OAuth 认证）
-  providerType?: "github_copilot";
+  // - "codex_auto": OpenAI Codex OAuth 供应商（需要 OAuth 认证）
+  providerType?: "github_copilot" | "codex_auto";
 
   // 是否需要 OAuth 认证（而非 API Key）
   requiresOAuth?: boolean;
@@ -707,6 +708,26 @@ export const providerPresets: ProviderPreset[] = [
     requiresOAuth: true,
     icon: "github",
     iconColor: "#000000",
+  },
+  {
+    name: "Codex Auto",
+    websiteUrl: "https://chatgpt.com/codex",
+      settingsConfig: {
+        env: {
+          ANTHROPIC_BASE_URL: "https://chatgpt.com/backend-api/codex",
+          ANTHROPIC_AUTH_TOKEN: "",
+          ANTHROPIC_MODEL: "gpt-5.4",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "gpt-5.4-mini",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "gpt-5.4",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "gpt-5.4",
+      },
+    },
+    category: "third_party",
+    apiFormat: "openai_responses",
+    providerType: "codex_auto",
+    requiresOAuth: true,
+    icon: "openai",
+    iconColor: "#00A67E",
   },
   {
     name: "Nvidia",

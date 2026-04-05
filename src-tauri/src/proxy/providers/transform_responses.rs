@@ -11,6 +11,8 @@
 use crate::proxy::error::ProxyError;
 use serde_json::{json, Value};
 
+const DEFAULT_CODEX_AUTO_INSTRUCTIONS: &str = "You are Codex, a helpful coding assistant.";
+
 /// Anthropic 请求 → OpenAI Responses 请求
 ///
 /// `cache_key`: optional prompt_cache_key to inject for improved cache routing
@@ -104,6 +106,51 @@ pub fn anthropic_to_responses(body: Value, cache_key: Option<&str>) -> Result<Va
     }
 
     Ok(result)
+}
+
+/// Apply Codex Auto specific defaults expected by the ChatGPT Codex Responses API.
+pub fn augment_codex_auto_responses(
+    mut body: Value,
+    instructions_fallback: Option<&str>,
+) -> Value {
+    if let Some(object) = body.as_object_mut() {
+        object.remove("max_output_tokens");
+    }
+
+    let has_instructions = body
+        .get("instructions")
+        .and_then(|value| value.as_str())
+        .map(|value| !value.trim().is_empty())
+        .unwrap_or(false);
+    if !has_instructions {
+        let instructions = instructions_fallback
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or(DEFAULT_CODEX_AUTO_INSTRUCTIONS);
+        body["instructions"] = json!(instructions);
+    }
+
+    if body.get("store").is_none() {
+        body["store"] = json!(false);
+    }
+
+    if body.get("text").is_none() {
+        body["text"] = json!({ "verbosity": "medium" });
+    }
+
+    if body.get("include").is_none() {
+        body["include"] = json!(["reasoning.encrypted_content"]);
+    }
+
+    if body.get("tool_choice").is_none() {
+        body["tool_choice"] = json!("auto");
+    }
+
+    if body.get("parallel_tool_calls").is_none() {
+        body["parallel_tool_calls"] = json!(true);
+    }
+
+    body
 }
 
 fn map_tool_choice_to_responses(tool_choice: &Value) -> Value {
@@ -857,6 +904,40 @@ mod tests {
         assert!(result["input"][0]["content"][0]
             .get("cache_control")
             .is_none());
+    }
+
+    #[test]
+    fn test_augment_codex_auto_responses_injects_defaults() {
+        let input = json!({
+            "model": "gpt-5.1-codex",
+            "input": [{"role": "user", "content": [{"type": "input_text", "text": "hi"}]}],
+            "stream": true
+        });
+
+        let result = augment_codex_auto_responses(input, None);
+
+        assert_eq!(
+            result["instructions"],
+            "You are Codex, a helpful coding assistant."
+        );
+        assert_eq!(result["store"], false);
+        assert_eq!(result["text"]["verbosity"], "medium");
+        assert_eq!(result["include"][0], "reasoning.encrypted_content");
+        assert_eq!(result["tool_choice"], "auto");
+        assert_eq!(result["parallel_tool_calls"], true);
+        assert!(result.get("max_output_tokens").is_none());
+    }
+
+    #[test]
+    fn test_augment_codex_auto_responses_preserves_existing_instructions() {
+        let input = json!({
+            "instructions": "Keep existing",
+            "input": []
+        });
+
+        let result = augment_codex_auto_responses(input, Some("fallback"));
+
+        assert_eq!(result["instructions"], "Keep existing");
     }
 
     #[test]

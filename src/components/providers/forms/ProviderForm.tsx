@@ -82,6 +82,7 @@ import {
   useOmoDraftState,
   useOpenclawFormState,
   useCopilotAuth,
+  useCodexAutoAuth,
 } from "./hooks";
 import {
   CLAUDE_DEFAULT_CONFIG,
@@ -343,13 +344,16 @@ export function ProviderForm({
     [localApiKeyField, form, handleSettingsConfigChange],
   );
 
-  // Copilot OAuth 认证状态（仅 Claude 应用需要）
+  // Managed OAuth 认证状态（仅 Claude 应用需要）
   const { isAuthenticated: isCopilotAuthenticated } = useCopilotAuth();
+  const { isAuthenticated: isCodexAutoAuthenticated } = useCodexAutoAuth();
 
-  // 选中的 GitHub 账号 ID（多账号支持）
   const [selectedGitHubAccountId, setSelectedGitHubAccountId] = useState<
     string | null
   >(() => resolveManagedAccountId(initialData?.meta, "github_copilot"));
+  const [selectedCodexAutoAccountId, setSelectedCodexAutoAccountId] = useState<
+    string | null
+  >(() => resolveManagedAccountId(initialData?.meta, "codex_auto"));
 
   const {
     codexAuth,
@@ -693,6 +697,30 @@ export function ProviderForm({
 
   const [isCommonConfigModalOpen, setIsCommonConfigModalOpen] = useState(false);
 
+  const isCopilotProvider =
+    templatePreset?.providerType === "github_copilot" ||
+    initialData?.meta?.providerType === "github_copilot" ||
+    baseUrl.includes("githubcopilot.com");
+  const isCodexAutoProvider =
+    templatePreset?.providerType === "codex_auto" ||
+    initialData?.meta?.providerType === "codex_auto";
+  const managedAuthProvider = isCopilotProvider
+    ? "github_copilot"
+    : isCodexAutoProvider
+      ? "codex_auto"
+      : null;
+  const isManagedOAuthProvider = managedAuthProvider !== null;
+  const isManagedAuthAuthenticated = isCopilotProvider
+    ? isCopilotAuthenticated
+    : isCodexAutoProvider
+      ? isCodexAutoAuthenticated
+      : false;
+  const selectedManagedAccountId = isCopilotProvider
+    ? selectedGitHubAccountId
+    : isCodexAutoProvider
+      ? selectedCodexAutoAccountId
+      : null;
+
   const handleSubmit = async (values: ProviderFormData) => {
     if (appId === "claude" && templateValueEntries.length > 0) {
       const validation = validateTemplateValues();
@@ -777,16 +805,20 @@ export function ProviderForm({
 
     // 非官方供应商必填校验：端点和 API Key
     // cloud_provider（如 Bedrock）通过模板变量处理认证，跳过通用校验
-    // GitHub Copilot 使用 OAuth 认证，不需要 API Key
-    const isCopilotProvider =
-      templatePreset?.providerType === "github_copilot" ||
-      initialData?.meta?.providerType === "github_copilot" ||
-      baseUrl.includes("githubcopilot.com");
-    // GitHub Copilot 必须先登录才能添加
+    // Managed OAuth 供应商使用托管认证，不需要手动 API Key
     if (isCopilotProvider && !isCopilotAuthenticated) {
       toast.error(
         t("copilot.loginRequired", {
           defaultValue: "请先登录 GitHub Copilot",
+        }),
+      );
+      return;
+    }
+
+    if (isCodexAutoProvider && !isCodexAutoAuthenticated) {
+      toast.error(
+        t("authCenter.codexAuto.loginRequired", {
+          defaultValue: "请先登录 Codex Auto",
         }),
       );
       return;
@@ -802,7 +834,7 @@ export function ProviderForm({
           );
           return;
         }
-        if (!isCopilotProvider && !apiKey.trim()) {
+        if (!isManagedOAuthProvider && !apiKey.trim()) {
           toast.error(
             t("providerForm.apiKeyRequired", {
               defaultValue: "非官方供应商请填写 API Key",
@@ -1017,11 +1049,11 @@ export function ProviderForm({
       endpointAutoSelect,
       // 保存 providerType（用于识别 Copilot 等特殊供应商）
       providerType,
-      authBinding: isCopilotProvider
+      authBinding: managedAuthProvider
         ? {
             source: "managed_account",
-            authProvider: "github_copilot",
-            accountId: selectedGitHubAccountId ?? undefined,
+            authProvider: managedAuthProvider,
+            accountId: selectedManagedAccountId ?? undefined,
           }
         : undefined,
       // GitHub Copilot 多账号：保存关联的账号 ID
@@ -1488,20 +1520,18 @@ export function ProviderForm({
             websiteUrl={claudeWebsiteUrl}
             isPartner={isClaudePartner}
             partnerPromotionKey={claudePartnerPromotionKey}
-            isCopilotPreset={
-              templatePreset?.providerType === "github_copilot" ||
-              initialData?.meta?.providerType === "github_copilot" ||
-              baseUrl.includes("githubcopilot.com")
+            isCopilotPreset={isCopilotProvider}
+            usesOAuth={templatePreset?.requiresOAuth === true || isManagedOAuthProvider}
+            managedAuthProvider={managedAuthProvider}
+            isManagedAuthAuthenticated={isManagedAuthAuthenticated}
+            selectedManagedAccountId={selectedManagedAccountId}
+            onManagedAccountSelect={
+              managedAuthProvider === "github_copilot"
+                ? setSelectedGitHubAccountId
+                : managedAuthProvider === "codex_auto"
+                  ? setSelectedCodexAutoAccountId
+                  : undefined
             }
-            usesOAuth={
-              templatePreset?.requiresOAuth === true ||
-              templatePreset?.providerType === "github_copilot" ||
-              initialData?.meta?.providerType === "github_copilot" ||
-              baseUrl.includes("githubcopilot.com")
-            }
-            isCopilotAuthenticated={isCopilotAuthenticated}
-            selectedGitHubAccountId={selectedGitHubAccountId}
-            onGitHubAccountSelect={setSelectedGitHubAccountId}
             templateValueEntries={templateValueEntries}
             templateValues={templateValues}
             templatePresetName={templatePreset?.name || ""}

@@ -705,13 +705,18 @@ pub fn run() {
 
             // 初始化 CopilotAuthManager
             {
+                use crate::proxy::providers::codex_auto_auth::CodexAutoAuthManager;
                 use crate::proxy::providers::copilot_auth::CopilotAuthManager;
-                use commands::CopilotAuthState;
+                use commands::{CodexAutoAuthState, CopilotAuthState};
                 use tokio::sync::RwLock;
 
                 let app_config_dir = crate::config::get_app_config_dir();
-                let copilot_auth_manager = CopilotAuthManager::new(app_config_dir);
+                let copilot_auth_manager = CopilotAuthManager::new(app_config_dir.clone());
                 app.manage(CopilotAuthState(Arc::new(RwLock::new(copilot_auth_manager))));
+                let codex_auto_auth_manager = CodexAutoAuthManager::new(app_config_dir);
+                app.manage(CodexAutoAuthState(Arc::new(RwLock::new(
+                    codex_auto_auth_manager,
+                ))));
                 log::info!("✓ CopilotAuthManager initialized");
             }
 

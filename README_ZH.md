@@ -380,9 +380,14 @@ pnpm test:unit:watch
 # 构建应用
 pnpm build
 
+# Windows 仅构建 exe（产物输出到 E:\cc_myself）
+pnpm build:win:exe
+
 # 构建调试版本
 pnpm tauri build --debug
 ```
+
+> Windows 本地打包如果遇到 `cargo`、`esbuild` 或 updater 签名问题，可直接参考 [`docs/build/windows-client-build.zh-CN.md`](docs/build/windows-client-build.zh-CN.md)。
 
 ### Rust 后端开发
 

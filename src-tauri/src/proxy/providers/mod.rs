@@ -15,6 +15,7 @@ mod adapter;
 mod auth;
 mod claude;
 mod codex;
+pub mod codex_auto_auth;
 pub mod copilot_auth;
 mod gemini;
 pub mod models;

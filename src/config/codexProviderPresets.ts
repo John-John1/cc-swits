@@ -8,6 +8,7 @@ export interface CodexProviderPreset {
   name: string;
   nameKey?: string; // i18n key for localized display name
   websiteUrl: string;
+  providerType?: "codex_auto";
   // 第三方供应商可提供单独的获取 API Key 链接
   apiKeyUrl?: string;
   auth: Record<string, any>; // 将写入 ~/.codex/auth.json
@@ -68,6 +69,7 @@ export const codexProviderPresets: CodexProviderPreset[] = [
     websiteUrl: "https://chatgpt.com/codex",
     isOfficial: true,
     category: "official",
+    providerType: "codex_auto",
     auth: {},
     config: ``,
     theme: {

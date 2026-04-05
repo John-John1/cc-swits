@@ -58,10 +58,12 @@ export function useManagedAuth(authProvider: ManagedAuthProvider) {
       setPollingState("polling");
       setError(null);
 
-      try {
-        await copyText(response.user_code);
-      } catch (e) {
-        console.debug("[ManagedAuth] Failed to copy user code:", e);
+      if (response.user_code.trim()) {
+        try {
+          await copyText(response.user_code);
+        } catch (e) {
+          console.debug("[ManagedAuth] Failed to copy user code:", e);
+        }
       }
 
       try {
@@ -72,7 +74,10 @@ export function useManagedAuth(authProvider: ManagedAuthProvider) {
 
       // Add a small buffer on top of GitHub's suggested interval to avoid
       // hitting slow_down responses too aggressively during device polling.
-      const interval = Math.max((response.interval || 5) + 3, 8) * 1000;
+      const interval =
+        authProvider === "codex_auto"
+          ? Math.max(response.interval || 2, 2) * 1000
+          : Math.max((response.interval || 5) + 3, 8) * 1000;
       const expiresAt = Date.now() + response.expires_in * 1000;
 
       const pollOnce = async () => {

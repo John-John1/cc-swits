@@ -1,6 +1,6 @@
-//! 流式健康检查命令
-
+//! Stream health check commands.
 use crate::app_config::AppType;
+use crate::commands::codex_auto::CodexAutoAuthState;
 use crate::commands::copilot::CopilotAuthState;
 use crate::error::AppError;
 use crate::services::stream_check::{
@@ -10,11 +10,11 @@ use crate::store::AppState;
 use std::collections::HashSet;
 use tauri::State;
 
-/// 流式健康检查（单个供应商）
 #[tauri::command]
 pub async fn stream_check_provider(
     state: State<'_, AppState>,
     copilot_state: State<'_, CopilotAuthState>,
+    codex_auto_state: State<'_, CodexAutoAuthState>,
     app_type: AppType,
     provider_id: String,
 ) -> Result<StreamCheckResult, AppError> {
@@ -23,9 +23,10 @@ pub async fn stream_check_provider(
     let providers = state.db.get_all_providers(app_type.as_str())?;
     let provider = providers
         .get(&provider_id)
-        .ok_or_else(|| AppError::Message(format!("供应商 {provider_id} 不存在")))?;
+        .ok_or_else(|| AppError::Message(format!("Provider {provider_id} does not exist")))?;
 
-    let auth_override = resolve_copilot_auth_override(provider, &copilot_state).await?;
+    let auth_override =
+        resolve_managed_auth_override(provider, &copilot_state, &codex_auto_state).await?;
     let base_url_override = resolve_copilot_base_url_override(provider, &copilot_state).await?;
     let claude_api_format_override = resolve_claude_api_format_override(
         &app_type,
@@ -35,6 +36,7 @@ pub async fn stream_check_provider(
         auth_override.as_ref(),
     )
     .await?;
+
     let result = StreamCheckService::check_with_retry(
         &app_type,
         provider,
@@ -45,20 +47,18 @@ pub async fn stream_check_provider(
     )
     .await?;
 
-    // 记录日志
-    let _ =
-        state
-            .db
-            .save_stream_check_log(&provider_id, &provider.name, app_type.as_str(), &result);
+    let _ = state
+        .db
+        .save_stream_check_log(&provider_id, &provider.name, app_type.as_str(), &result);
 
     Ok(result)
 }
 
-/// 批量流式健康检查
 #[tauri::command]
 pub async fn stream_check_all_providers(
     state: State<'_, AppState>,
     copilot_state: State<'_, CopilotAuthState>,
+    codex_auto_state: State<'_, CodexAutoAuthState>,
     app_type: AppType,
     proxy_targets_only: bool,
 ) -> Result<Vec<(String, StreamCheckResult)>, AppError> {
@@ -88,7 +88,8 @@ pub async fn stream_check_all_providers(
             }
         }
 
-        let auth_override = resolve_copilot_auth_override(&provider, &copilot_state).await?;
+        let auth_override =
+            resolve_managed_auth_override(&provider, &copilot_state, &codex_auto_state).await?;
         let base_url_override =
             resolve_copilot_base_url_override(&provider, &copilot_state).await?;
         let claude_api_format_override = resolve_claude_api_format_override(
@@ -107,6 +108,7 @@ pub async fn stream_check_all_providers(
             );
             None
         });
+
         let result = StreamCheckService::check_with_retry(
             &app_type,
             &provider,
@@ -137,13 +139,11 @@ pub async fn stream_check_all_providers(
     Ok(results)
 }
 
-/// 获取流式检查配置
 #[tauri::command]
 pub fn get_stream_check_config(state: State<'_, AppState>) -> Result<StreamCheckConfig, AppError> {
     state.db.get_stream_check_config()
 }
 
-/// 保存流式检查配置
 #[tauri::command]
 pub fn save_stream_check_config(
     state: State<'_, AppState>,
@@ -152,37 +152,60 @@ pub fn save_stream_check_config(
     state.db.save_stream_check_config(&config)
 }
 
-async fn resolve_copilot_auth_override(
+async fn resolve_managed_auth_override(
     provider: &crate::provider::Provider,
     copilot_state: &State<'_, CopilotAuthState>,
+    codex_auto_state: &State<'_, CodexAutoAuthState>,
 ) -> Result<Option<crate::proxy::providers::AuthInfo>, AppError> {
-    let is_copilot = is_copilot_provider(provider);
+    if is_copilot_provider(provider) {
+        let auth_manager = copilot_state.0.read().await;
+        let account_id = provider
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.managed_account_id_for("github_copilot"));
 
-    if !is_copilot {
-        return Ok(None);
+        let token = match account_id.as_deref() {
+            Some(id) => auth_manager
+                .get_valid_token_for_account(id)
+                .await
+                .map_err(|e| AppError::Message(format!("GitHub Copilot auth failed: {e}")))?,
+            None => auth_manager
+                .get_valid_token()
+                .await
+                .map_err(|e| AppError::Message(format!("GitHub Copilot auth failed: {e}")))?,
+        };
+
+        return Ok(Some(crate::proxy::providers::AuthInfo::new(
+            token,
+            crate::proxy::providers::AuthStrategy::GitHubCopilot,
+        )));
     }
 
-    let auth_manager = copilot_state.0.read().await;
-    let account_id = provider
-        .meta
-        .as_ref()
-        .and_then(|meta| meta.managed_account_id_for("github_copilot"));
+    if is_codex_auto_provider(provider) {
+        let auth_manager = codex_auto_state.0.read().await;
+        let account_id = provider
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.managed_account_id_for("codex_auto"));
 
-    let token = match account_id.as_deref() {
-        Some(id) => auth_manager
-            .get_valid_token_for_account(id)
-            .await
-            .map_err(|e| AppError::Message(format!("GitHub Copilot 认证失败: {e}")))?,
-        None => auth_manager
-            .get_valid_token()
-            .await
-            .map_err(|e| AppError::Message(format!("GitHub Copilot 认证失败: {e}")))?,
-    };
+        let token = match account_id.as_deref() {
+            Some(id) => auth_manager
+                .get_valid_token_for_account(id)
+                .await
+                .map_err(|e| AppError::Message(format!("Codex Auto auth failed: {e}")))?,
+            None => auth_manager
+                .get_valid_token()
+                .await
+                .map_err(|e| AppError::Message(format!("Codex Auto auth failed: {e}")))?,
+        };
 
-    Ok(Some(crate::proxy::providers::AuthInfo::new(
-        token,
-        crate::proxy::providers::AuthStrategy::GitHubCopilot,
-    )))
+        return Ok(Some(crate::proxy::providers::AuthInfo::new(
+            token,
+            crate::proxy::providers::AuthStrategy::Bearer,
+        )));
+    }
+
+    Ok(None)
 }
 
 async fn resolve_copilot_base_url_override(
@@ -228,6 +251,14 @@ fn is_copilot_provider(provider: &crate::provider::Provider) -> bool {
             .unwrap_or(false)
 }
 
+fn is_codex_auto_provider(provider: &crate::provider::Provider) -> bool {
+    provider
+        .meta
+        .as_ref()
+        .and_then(|meta| meta.provider_type.as_deref())
+        == Some("codex_auto")
+}
+
 async fn resolve_claude_api_format_override(
     app_type: &AppType,
     provider: &crate::provider::Provider,
@@ -237,6 +268,10 @@ async fn resolve_claude_api_format_override(
 ) -> Result<Option<String>, AppError> {
     if *app_type != AppType::Claude {
         return Ok(None);
+    }
+
+    if is_codex_auto_provider(provider) {
+        return Ok(Some("openai_responses".to_string()));
     }
 
     let is_copilot = auth_override
@@ -254,11 +289,7 @@ async fn resolve_claude_api_format_override(
         .and_then(|meta| meta.managed_account_id_for("github_copilot"));
 
     let vendor_result = match account_id.as_deref() {
-        Some(id) => {
-            auth_manager
-                .get_model_vendor_for_account(id, &model_id)
-                .await
-        }
+        Some(id) => auth_manager.get_model_vendor_for_account(id, &model_id).await,
         None => auth_manager.get_model_vendor(&model_id).await,
     };
 
@@ -278,7 +309,7 @@ async fn resolve_claude_api_format_override(
 
 #[cfg(test)]
 mod tests {
-    use super::is_copilot_provider;
+    use super::{is_codex_auto_provider, is_copilot_provider};
     use crate::provider::{Provider, ProviderMeta};
     use serde_json::json;
 
@@ -350,5 +381,29 @@ mod tests {
             provider.meta.as_ref().and_then(|meta| meta.is_full_url),
             Some(true)
         );
+    }
+
+    #[test]
+    fn codex_auto_provider_detection_uses_provider_type() {
+        let provider = Provider {
+            id: "p4".to_string(),
+            name: "codex-auto".to_string(),
+            settings_config: json!({}),
+            website_url: None,
+            category: None,
+            created_at: None,
+            sort_index: None,
+            notes: None,
+            meta: Some(ProviderMeta {
+                provider_type: Some("codex_auto".to_string()),
+                ..Default::default()
+            }),
+            icon: None,
+            icon_color: None,
+            in_failover_queue: false,
+        };
+
+        assert!(is_codex_auto_provider(&provider));
+        assert!(!is_copilot_provider(&provider));
     }
 }

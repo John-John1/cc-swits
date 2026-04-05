@@ -142,6 +142,14 @@ impl ClaudeAdapter {
         false
     }
 
+    fn is_codex_auto(&self, provider: &Provider) -> bool {
+        provider
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.provider_type.as_deref())
+            == Some("codex_auto")
+    }
+
     /// 检测是否使用 OpenRouter
     fn is_openrouter(&self, provider: &Provider) -> bool {
         if let Ok(base_url) = self.extract_base_url(provider) {
@@ -301,6 +309,14 @@ impl ProviderAdapter for ClaudeAdapter {
             return Some(AuthInfo::new(
                 "copilot_placeholder".to_string(),
                 AuthStrategy::GitHubCopilot,
+            ));
+        }
+
+        if self.is_codex_auto(provider) {
+            // 返回一个占位符，实际 token 由 CodexAutoAuthManager 动态提供
+            return Some(AuthInfo::new(
+                "codex_auto_placeholder".to_string(),
+                AuthStrategy::Bearer,
             ));
         }
 

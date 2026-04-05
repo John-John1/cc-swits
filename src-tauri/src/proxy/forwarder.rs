@@ -17,8 +17,9 @@ use super::{
     types::{CopilotOptimizerConfig, OptimizerConfig, ProxyStatus, RectifierConfig},
     ProxyError,
 };
-use crate::commands::CopilotAuthState;
+use crate::commands::{CodexAutoAuthState, CopilotAuthState};
 use crate::proxy::providers::copilot_auth::CopilotAuthManager;
+use crate::proxy::providers::codex_auto_auth::CODEX_AUTO_BASE_URL;
 use crate::{app_config::AppType, provider::Provider};
 use http::Extensions;
 use serde_json::Value;
@@ -774,6 +775,11 @@ impl RequestForwarder {
             .and_then(|m| m.provider_type.as_deref())
             == Some("github_copilot")
             || base_url.contains("githubcopilot.com");
+        let is_codex_auto = provider
+            .meta
+            .as_ref()
+            .and_then(|m| m.provider_type.as_deref())
+            == Some("codex_auto");
 
         // --- Copilot 优化器：请求体优化 + 分类（在格式转换之前执行） ---
         // 注意：确定性 ID 也在此处计算，因为 mapped_body 在格式转换时会被 move
@@ -860,7 +866,12 @@ impl RequestForwarder {
                 }
             }
         }
-        let resolved_claude_api_format = if adapter.name() == "Claude" {
+        if is_codex_auto && !is_full_url {
+            base_url = CODEX_AUTO_BASE_URL.to_string();
+        }
+        let resolved_claude_api_format = if adapter.name() == "Claude" && is_codex_auto {
+            Some("openai_responses".to_string())
+        } else if adapter.name() == "Claude" {
             Some(
                 self.resolve_claude_api_format(provider, &mapped_body, is_copilot)
                     .await,
@@ -877,7 +888,12 @@ impl RequestForwarder {
                 let api_format = resolved_claude_api_format
                     .as_deref()
                     .unwrap_or_else(|| super::providers::get_claude_api_format(provider));
-                rewrite_claude_transform_endpoint(endpoint, api_format, is_copilot)
+                rewrite_claude_transform_endpoint(
+                    endpoint,
+                    api_format,
+                    is_copilot,
+                    is_codex_auto,
+                )
             } else {
                 (
                     endpoint.to_string(),
@@ -894,7 +910,7 @@ impl RequestForwarder {
         };
 
         // 转换请求体（如果需要）
-        let request_body = if needs_transform {
+        let mut request_body = if needs_transform {
             if adapter.name() == "Claude" {
                 let api_format = resolved_claude_api_format
                     .as_deref()
@@ -911,6 +927,16 @@ impl RequestForwarder {
             mapped_body
         };
 
+        if adapter.name() == "Claude"
+            && is_codex_auto
+            && matches!(resolved_claude_api_format.as_deref(), Some("openai_responses"))
+        {
+            request_body = super::providers::transform_responses::augment_codex_auto_responses(
+                request_body,
+                None,
+            );
+        }
+
         // 过滤私有参数（以 `_` 开头的字段），防止内部信息泄露到上游
         // 默认使用空白名单，过滤所有 _ 前缀字段
         let filtered_body = filter_private_params_with_whitelist(request_body, &[]);
@@ -918,6 +944,7 @@ impl RequestForwarder {
             || should_force_identity_encoding(&effective_endpoint, &filtered_body, headers);
 
         // 获取认证头（提前准备，用于内联替换）
+        let mut codex_auto_account_id = None;
         let mut auth_headers = if let Some(mut auth) = adapter.extract_auth(provider) {
             // GitHub Copilot 特殊处理：从 CopilotAuthManager 获取真实 token
             if auth.strategy == AuthStrategy::GitHubCopilot {
@@ -968,6 +995,47 @@ impl RequestForwarder {
                         "GitHub Copilot 认证不可用（无 AppHandle）".to_string(),
                     ));
                 }
+            } else if is_codex_auto {
+                if let Some(app_handle) = &self.app_handle {
+                    let codex_auto_state = app_handle.state::<CodexAutoAuthState>();
+                    let codex_auto_auth = codex_auto_state.0.read().await;
+                    let account_id = provider
+                        .meta
+                        .as_ref()
+                        .and_then(|m| m.managed_account_id_for("codex_auto"));
+
+                    let token_result = match &account_id {
+                        Some(id) => codex_auto_auth.get_valid_token_for_account(id).await,
+                        None => codex_auto_auth.get_valid_token().await,
+                    };
+
+                    match token_result {
+                        Ok(token) => {
+                            auth = AuthInfo::new(token, auth.strategy);
+                            codex_auto_account_id = crate::proxy::providers::codex_auto_auth::CodexAutoAuthManager::extract_account_id_from_token(
+                                &auth.api_key,
+                            );
+                            log::debug!(
+                                "[CodexAuto] 成功获取 managed token (account={})",
+                                account_id.as_deref().unwrap_or("default")
+                            );
+                        }
+                        Err(e) => {
+                            log::error!(
+                                "[CodexAuto] 获取 managed token 失败 (account={}): {e}",
+                                account_id.as_deref().unwrap_or("default")
+                            );
+                            return Err(ProxyError::AuthError(format!(
+                                "Codex Auto 认证失败: {e}"
+                            )));
+                        }
+                    }
+                } else {
+                    log::error!("[CodexAuto] AppHandle 不可用");
+                    return Err(ProxyError::AuthError(
+                        "Codex Auto 认证不可用（无 AppHandle）".to_string(),
+                    ));
+                }
             }
             adapter.get_auth_headers(&auth)
         } else {
@@ -975,6 +1043,44 @@ impl RequestForwarder {
         };
 
         // --- Copilot 优化器：动态 header 注入 ---
+        if is_codex_auto {
+            if let Some(account_id) = codex_auto_account_id.as_deref() {
+                auth_headers.push((
+                    http::HeaderName::from_static("chatgpt-account-id"),
+                    http::HeaderValue::from_str(account_id).map_err(|e| {
+                        ProxyError::AuthError(format!(
+                            "Codex Auto account_id header invalid: {e}"
+                        ))
+                    })?,
+                ));
+            }
+
+            auth_headers.push((
+                http::HeaderName::from_static("openai-beta"),
+                http::HeaderValue::from_static("responses=experimental"),
+            ));
+            auth_headers.push((
+                http::HeaderName::from_static("originator"),
+                http::HeaderValue::from_static("cc_switch"),
+            ));
+            auth_headers.push((
+                http::header::USER_AGENT,
+                http::HeaderValue::from_static("cc-switch/3.12.3"),
+            ));
+
+            let session_id = filtered_body
+                .get("prompt_cache_key")
+                .and_then(|value| value.as_str())
+                .filter(|value| !value.trim().is_empty())
+                .unwrap_or(&provider.id);
+            auth_headers.push((
+                http::HeaderName::from_static("session_id"),
+                http::HeaderValue::from_str(session_id).map_err(|e| {
+                    ProxyError::AuthError(format!("Codex Auto session_id header invalid: {e}"))
+                })?,
+            ));
+        }
+
         if let Some((ref classification, ref det_request_id)) = copilot_optimization {
             for (name, value) in auth_headers.iter_mut() {
                 match name.as_str() {
@@ -1530,6 +1636,7 @@ fn rewrite_claude_transform_endpoint(
     endpoint: &str,
     api_format: &str,
     is_copilot: bool,
+    is_codex_auto: bool,
 ) -> (String, Option<String>) {
     let (path, query) = split_endpoint_and_query(endpoint);
     let passthrough_query = if is_claude_messages_path(path) {
@@ -1542,7 +1649,9 @@ fn rewrite_claude_transform_endpoint(
         return (endpoint.to_string(), passthrough_query);
     }
 
-    let target_path = if is_copilot && api_format == "openai_responses" {
+    let target_path = if is_codex_auto && api_format == "openai_responses" {
+        "/responses"
+    } else if is_copilot && api_format == "openai_responses" {
         "/v1/responses"
     } else if is_copilot {
         "/chat/completions"
@@ -1688,6 +1797,7 @@ mod tests {
             "/v1/messages?beta=true&foo=bar",
             "openai_chat",
             false,
+            false,
         );
 
         assert_eq!(endpoint, "/v1/chat/completions?foo=bar");
@@ -1700,6 +1810,7 @@ mod tests {
             "/claude/v1/messages?beta=true&x-id=1",
             "openai_responses",
             false,
+            false,
         );
 
         assert_eq!(endpoint, "/v1/responses?x-id=1");
@@ -1709,7 +1820,12 @@ mod tests {
     #[test]
     fn rewrite_claude_transform_endpoint_uses_copilot_path() {
         let (endpoint, passthrough_query) =
-            rewrite_claude_transform_endpoint("/v1/messages?beta=true&x-id=1", "anthropic", true);
+            rewrite_claude_transform_endpoint(
+                "/v1/messages?beta=true&x-id=1",
+                "anthropic",
+                true,
+                false,
+            );
 
         assert_eq!(endpoint, "/chat/completions?x-id=1");
         assert_eq!(passthrough_query.as_deref(), Some("x-id=1"));
@@ -1721,9 +1837,23 @@ mod tests {
             "/v1/messages?beta=true&x-id=1",
             "openai_responses",
             true,
+            false,
         );
 
         assert_eq!(endpoint, "/v1/responses?x-id=1");
+        assert_eq!(passthrough_query.as_deref(), Some("x-id=1"));
+    }
+
+    #[test]
+    fn rewrite_claude_transform_endpoint_uses_codex_auto_responses_path() {
+        let (endpoint, passthrough_query) = rewrite_claude_transform_endpoint(
+            "/v1/messages?beta=true&x-id=1",
+            "openai_responses",
+            false,
+            true,
+        );
+
+        assert_eq!(endpoint, "/responses?x-id=1");
         assert_eq!(passthrough_query.as_deref(), Some("x-id=1"));
     }
 

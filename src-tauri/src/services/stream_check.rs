@@ -12,9 +12,12 @@ use std::time::Instant;
 use crate::app_config::AppType;
 use crate::error::AppError;
 use crate::provider::Provider;
+use crate::proxy::providers::codex_auto_auth::CODEX_AUTO_RESPONSES_URL;
 use crate::proxy::providers::copilot_auth;
 use crate::proxy::providers::transform::anthropic_to_openai;
-use crate::proxy::providers::transform_responses::anthropic_to_responses;
+use crate::proxy::providers::transform_responses::{
+    anthropic_to_responses, augment_codex_auto_responses,
+};
 use crate::proxy::providers::{get_adapter, AuthInfo, AuthStrategy};
 
 /// 健康状态枚举
@@ -322,6 +325,11 @@ impl StreamCheckService {
     ) -> Result<(u16, String), AppError> {
         let base = base_url.trim_end_matches('/');
         let is_github_copilot = auth.strategy == AuthStrategy::GitHubCopilot;
+        let is_codex_auto = provider
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.provider_type.as_deref())
+            == Some("codex_auto");
 
         // Detect api_format: meta.api_format > settings_config.api_format > default "anthropic"
         let api_format = provider
@@ -343,10 +351,13 @@ impl StreamCheckService {
             .as_ref()
             .and_then(|meta| meta.is_full_url)
             .unwrap_or(false);
-        let is_openai_chat = effective_api_format == "openai_chat";
-        let is_openai_responses = effective_api_format == "openai_responses";
-        let url =
-            Self::resolve_claude_stream_url(base, auth.strategy, effective_api_format, is_full_url);
+        let is_openai_chat = effective_api_format == "openai_chat" && !is_codex_auto;
+        let is_openai_responses = effective_api_format == "openai_responses" || is_codex_auto;
+        let url = if is_codex_auto {
+            CODEX_AUTO_RESPONSES_URL.to_string()
+        } else {
+            Self::resolve_claude_stream_url(base, auth.strategy, effective_api_format, is_full_url)
+        };
 
         let max_tokens = if is_openai_responses { 16 } else { 1 };
 
@@ -358,8 +369,13 @@ impl StreamCheckService {
             "stream": true
         });
         let body = if is_openai_responses {
-            anthropic_to_responses(anthropic_body, Some(&provider.id))
-                .map_err(|e| AppError::Message(format!("Failed to build test request: {e}")))?
+            let responses_body = anthropic_to_responses(anthropic_body, Some(&provider.id))
+                .map_err(|e| AppError::Message(format!("Failed to build test request: {e}")))?;
+            if is_codex_auto {
+                augment_codex_auto_responses(responses_body, Some("You are Codex."))
+            } else {
+                responses_body
+            }
         } else if is_openai_chat {
             anthropic_to_openai(anthropic_body, Some(&provider.id))
                 .map_err(|e| AppError::Message(format!("Failed to build test request: {e}")))?
@@ -402,6 +418,20 @@ impl StreamCheckService {
                 .header("content-type", "application/json")
                 .header("accept", "text/event-stream")
                 .header("accept-encoding", "identity");
+
+            if is_codex_auto {
+                request_builder = request_builder
+                    .header("openai-beta", "responses=experimental")
+                    .header("originator", "cc_switch")
+                    .header("user-agent", "cc-switch/3.12.3")
+                    .header("session_id", &provider.id);
+                if let Some(account_id) = crate::proxy::providers::codex_auto_auth::CodexAutoAuthManager::extract_account_id_from_token(
+                    &auth.api_key,
+                ) {
+                    request_builder =
+                        request_builder.header("ChatGPT-Account-Id", account_id);
+                }
+            }
         } else {
             // Anthropic native: full Claude CLI headers
             let os_name = Self::get_os_name();

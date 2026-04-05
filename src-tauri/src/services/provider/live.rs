@@ -682,7 +682,26 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
             })?;
 
             let auth_path = get_codex_auth_path();
-            write_json_file(&auth_path, auth)?;
+            let auth_to_write = if provider
+                .meta
+                .as_ref()
+                .and_then(|meta| meta.provider_type.as_deref())
+                == Some("codex_auto")
+            {
+                if auth_path.exists() {
+                    read_json_file::<Value>(&auth_path)
+                        .ok()
+                        .filter(|value| {
+                            value.get("auth_mode").and_then(Value::as_str) == Some("chatgpt")
+                        })
+                        .unwrap_or_else(|| auth.clone())
+                } else {
+                    auth.clone()
+                }
+            } else {
+                auth.clone()
+            };
+            write_json_file(&auth_path, &auth_to_write)?;
             let config_path = get_codex_config_path();
             std::fs::write(&config_path, config_str).map_err(|e| AppError::io(&config_path, e))?;
         }

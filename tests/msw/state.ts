@@ -7,9 +7,9 @@ import type {
   Settings,
 } from "@/types";
 
-type ProvidersByApp = Record<AppId, Record<string, Provider>>;
-type CurrentProviderState = Record<AppId, string>;
-type McpConfigState = Record<AppId, Record<string, McpServer>>;
+type ProvidersByApp = Partial<Record<AppId, Record<string, Provider>>>;
+type CurrentProviderState = Partial<Record<AppId, string>>;
+type McpConfigState = Partial<Record<AppId, Record<string, McpServer>>>;
 type LiveProviderIdsByApp = Record<"opencode" | "openclaw", string[]>;
 
 const createDefaultProviders = (): ProvidersByApp => ({
@@ -300,10 +300,11 @@ export const updateProvider = (appType: AppId, provider: Provider) => {
 };
 
 export const deleteProvider = (appType: AppId, providerId: string) => {
-  if (!providers[appType]) return;
-  delete providers[appType][providerId];
+  const appProviders = providers[appType];
+  if (!appProviders) return;
+  delete appProviders[providerId];
   if (current[appType] === providerId) {
-    const fallback = Object.keys(providers[appType])[0] ?? "";
+    const fallback = Object.keys(appProviders)[0] ?? "";
     current[appType] = fallback;
   }
 };
@@ -312,11 +313,12 @@ export const updateSortOrder = (
   appType: AppId,
   updates: { id: string; sortIndex: number }[],
 ) => {
-  if (!providers[appType]) return;
+  const appProviders = providers[appType];
+  if (!appProviders) return;
   updates.forEach(({ id, sortIndex }) => {
-    const provider = providers[appType][id];
+    const provider = appProviders[id];
     if (provider) {
-      providers[appType][id] = { ...provider, sortIndex };
+      appProviders[id] = { ...provider, sortIndex };
     }
   });
 };

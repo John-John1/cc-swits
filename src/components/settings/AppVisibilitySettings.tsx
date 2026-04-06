@@ -15,12 +15,44 @@ const APP_CONFIG: Array<{
   id: AppId;
   icon: string;
   nameKey: string;
+  defaultLabel: string;
 }> = [
-  { id: "claude", icon: "claude", nameKey: "apps.claude" },
-  { id: "codex", icon: "openai", nameKey: "apps.codex" },
-  { id: "gemini", icon: "gemini", nameKey: "apps.gemini" },
-  { id: "opencode", icon: "opencode", nameKey: "apps.opencode" },
-  { id: "openclaw", icon: "openclaw", nameKey: "apps.openclaw" },
+  {
+    id: "claude",
+    icon: "claude",
+    nameKey: "apps.claude",
+    defaultLabel: "Claude",
+  },
+  {
+    id: "claudeApp",
+    icon: "claude",
+    nameKey: "apps.claudeApp",
+    defaultLabel: "Claude App",
+  },
+  {
+    id: "codex",
+    icon: "openai",
+    nameKey: "apps.codex",
+    defaultLabel: "Codex",
+  },
+  {
+    id: "gemini",
+    icon: "gemini",
+    nameKey: "apps.gemini",
+    defaultLabel: "Gemini",
+  },
+  {
+    id: "opencode",
+    icon: "opencode",
+    nameKey: "apps.opencode",
+    defaultLabel: "OpenCode",
+  },
+  {
+    id: "openclaw",
+    icon: "openclaw",
+    nameKey: "apps.openclaw",
+    defaultLabel: "OpenClaw",
+  },
 ];
 
 export function AppVisibilitySettings({
@@ -31,6 +63,7 @@ export function AppVisibilitySettings({
 
   const visibleApps: VisibleApps = settings.visibleApps ?? {
     claude: true,
+    claudeApp: true,
     codex: true,
     gemini: true,
     opencode: true,
@@ -76,9 +109,9 @@ export function AppVisibilitySettings({
               disabled={isDisabled}
               onClick={() => handleToggle(app.id)}
               icon={app.icon}
-              name={t(app.nameKey)}
+              name={t(app.nameKey, { defaultValue: app.defaultLabel })}
             >
-              {t(app.nameKey)}
+              {t(app.nameKey, { defaultValue: app.defaultLabel })}
             </AppButton>
           );
         })}

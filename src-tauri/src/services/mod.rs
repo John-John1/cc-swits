@@ -1,3 +1,4 @@
+pub mod claude_app;
 pub mod coding_plan;
 pub mod config;
 pub mod env_checker;
@@ -17,6 +18,7 @@ pub mod webdav;
 pub mod webdav_auto_sync;
 pub mod webdav_sync;
 
+pub use claude_app::{ClaudeAppBridgeService, ClaudeAppBridgeStatus};
 pub use config::ConfigService;
 pub use mcp::McpService;
 pub use omo::OmoService;

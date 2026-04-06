@@ -17,6 +17,7 @@ mod claude;
 mod codex;
 pub mod codex_auto_auth;
 pub mod copilot_auth;
+pub mod gemini_auto_auth;
 mod gemini;
 pub mod models;
 pub mod streaming;
@@ -102,6 +103,9 @@ impl ProviderType {
                     if meta.provider_type.as_deref() == Some("github_copilot") {
                         return ProviderType::GitHubCopilot;
                     }
+                    if meta.provider_type.as_deref() == Some("gemini_auto") {
+                        return ProviderType::GeminiCli;
+                    }
                 }
 
                 // 检测 base_url 是否为 GitHub Copilot
@@ -140,6 +144,11 @@ impl ProviderType {
             }
             AppType::Codex => ProviderType::Codex,
             AppType::Gemini => {
+                if let Some(meta) = provider.meta.as_ref() {
+                    if meta.provider_type.as_deref() == Some("gemini_auto") {
+                        return ProviderType::GeminiCli;
+                    }
+                }
                 // 检测是否为 CLI 模式（OAuth）
                 let adapter = GeminiAdapter::new();
                 if let Some(auth) = adapter.extract_auth(provider) {

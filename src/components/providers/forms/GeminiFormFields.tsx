@@ -1,17 +1,18 @@
 import { useCallback, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { FormLabel } from "@/components/ui/form";
 import { Download, Info, Loader2 } from "lucide-react";
-import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
-import EndpointSpeedTest from "./EndpointSpeedTest";
-import { ApiKeySection, EndpointField, ModelInputWithFetch } from "./shared";
+import { Button } from "@/components/ui/button";
+import { FormLabel } from "@/components/ui/form";
+import type { ProviderCategory } from "@/types";
 import {
   fetchModelsForConfig,
   showFetchModelsError,
   type FetchedModel,
 } from "@/lib/api/model-fetch";
-import type { ProviderCategory } from "@/types";
+import EndpointSpeedTest from "./EndpointSpeedTest";
+import { GeminiAutoAuthSection } from "./GeminiAutoAuthSection";
+import { ApiKeySection, EndpointField, ModelInputWithFetch } from "./shared";
 
 interface EndpointCandidate {
   url: string;
@@ -19,7 +20,6 @@ interface EndpointCandidate {
 
 interface GeminiFormFieldsProps {
   providerId?: string;
-  // API Key
   shouldShowApiKey: boolean;
   apiKey: string;
   onApiKeyChange: (key: string) => void;
@@ -28,8 +28,6 @@ interface GeminiFormFieldsProps {
   websiteUrl: string;
   isPartner?: boolean;
   partnerPromotionKey?: string;
-
-  // Base URL
   shouldShowSpeedTest: boolean;
   baseUrl: string;
   onBaseUrlChange: (url: string) => void;
@@ -38,14 +36,14 @@ interface GeminiFormFieldsProps {
   onCustomEndpointsChange: (endpoints: string[]) => void;
   autoSelect: boolean;
   onAutoSelectChange: (checked: boolean) => void;
-
-  // Model
   shouldShowModelField: boolean;
   model: string;
   onModelChange: (value: string) => void;
-
-  // Speed Test Endpoints
   speedTestEndpoints: EndpointCandidate[];
+  managedAuthProvider?: "gemini_auto" | null;
+  isManagedAuthAuthenticated?: boolean;
+  selectedManagedAccountId?: string | null;
+  onManagedAccountSelect?: (accountId: string | null) => void;
 }
 
 export function GeminiFormFields({
@@ -70,11 +68,18 @@ export function GeminiFormFields({
   model,
   onModelChange,
   speedTestEndpoints,
+  managedAuthProvider,
+  isManagedAuthAuthenticated = false,
+  selectedManagedAccountId,
+  onManagedAccountSelect,
 }: GeminiFormFieldsProps) {
   const { t } = useTranslation();
-
   const [fetchedModels, setFetchedModels] = useState<FetchedModel[]>([]);
   const [isFetchingModels, setIsFetchingModels] = useState(false);
+
+  const isGoogleOfficial =
+    partnerPromotionKey?.toLowerCase() === "google-official";
+  const isGeminiAutoProvider = managedAuthProvider === "gemini_auto";
 
   const handleFetchModels = useCallback(() => {
     if (!baseUrl || !apiKey) {
@@ -101,17 +106,12 @@ export function GeminiFormFields({
         showFetchModelsError(err, t);
       })
       .finally(() => setIsFetchingModels(false));
-  }, [baseUrl, apiKey, t]);
-
-  // 检测是否为 Google 官方（使用 OAuth）
-  const isGoogleOfficial =
-    partnerPromotionKey?.toLowerCase() === "google-official";
+  }, [apiKey, baseUrl, t]);
 
   return (
     <>
-      {/* Google OAuth 提示 */}
       {isGoogleOfficial && (
-        <div className="rounded-lg border border-blue-200 bg-blue-50 p-4 dark:border-blue-800 dark:bg-blue-950">
+        <div className="space-y-4 rounded-lg border border-blue-200 bg-blue-50 p-4 dark:border-blue-800 dark:bg-blue-950">
           <div className="flex gap-3">
             <Info className="h-5 w-5 flex-shrink-0 text-blue-600 dark:text-blue-400" />
             <div className="space-y-1">
@@ -123,15 +123,30 @@ export function GeminiFormFields({
               <p className="text-sm text-blue-700 dark:text-blue-300">
                 {t("provider.form.gemini.oauthHint", {
                   defaultValue:
-                    "Google 官方使用 OAuth 个人认证，无需填写 API Key。首次使用时会自动打开浏览器进行登录。",
+                    "Google Official 使用 Google 账号 OAuth 托管认证，不需要手动填写 API Key。",
                 })}
               </p>
             </div>
           </div>
+
+          {isGeminiAutoProvider && (
+            <GeminiAutoAuthSection
+              selectedAccountId={selectedManagedAccountId}
+              onAccountSelect={onManagedAccountSelect}
+            />
+          )}
+
+          {isGeminiAutoProvider && !isManagedAuthAuthenticated && (
+            <p className="text-sm text-amber-700 dark:text-amber-300">
+              {t("provider.form.gemini.oauthLoginRequired", {
+                defaultValue:
+                  "请先完成 Google 账号登录，再保存 Google Official provider。",
+              })}
+            </p>
+          )}
         </div>
       )}
 
-      {/* API Key 输入框 */}
       {shouldShowApiKey && !isGoogleOfficial && (
         <ApiKeySection
           value={apiKey}
@@ -144,7 +159,6 @@ export function GeminiFormFields({
         />
       )}
 
-      {/* Base URL 输入框（统一使用与 Codex 相同的样式与交互） */}
       {shouldShowSpeedTest && (
         <EndpointField
           id="baseUrl"
@@ -158,41 +172,41 @@ export function GeminiFormFields({
         />
       )}
 
-      {/* Model 输入框 */}
       {shouldShowModelField && (
         <div className="space-y-2">
           <div className="flex items-center justify-between">
             <FormLabel htmlFor="gemini-model">
               {t("provider.form.gemini.model", { defaultValue: "模型" })}
             </FormLabel>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={handleFetchModels}
-              disabled={isFetchingModels}
-              className="h-7 gap-1"
-            >
-              {isFetchingModels ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              ) : (
-                <Download className="h-3.5 w-3.5" />
-              )}
-              {t("providerForm.fetchModels")}
-            </Button>
+            {!isGoogleOfficial && (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={handleFetchModels}
+                disabled={isFetchingModels}
+                className="h-7 gap-1"
+              >
+                {isFetchingModels ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Download className="h-3.5 w-3.5" />
+                )}
+                {t("providerForm.fetchModels")}
+              </Button>
+            )}
           </div>
           <ModelInputWithFetch
             id="gemini-model"
             value={model}
             onChange={onModelChange}
-            placeholder="gemini-3-pro-preview"
+            placeholder="gemini-2.5-pro"
             fetchedModels={fetchedModels}
             isLoading={isFetchingModels}
           />
         </div>
       )}
 
-      {/* 端点测速弹窗 */}
       {shouldShowSpeedTest && isEndpointModalOpen && (
         <EndpointSpeedTest
           appId="gemini"

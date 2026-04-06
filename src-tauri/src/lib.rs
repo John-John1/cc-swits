@@ -191,6 +191,10 @@ fn macos_tray_icon() -> Option<Image<'static>> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    if crate::services::claude_app::maybe_run_claude_wrapper() {
+        return;
+    }
+
     // 设置 panic hook，在应用崩溃时记录日志到 <app_config_dir>/crash.log（默认 ~/.cc-switch/crash.log）
     panic_hook::setup_panic_hook();
 
@@ -402,6 +406,9 @@ pub fn run() {
 
             // 设置 AppHandle 用于代理故障转移时的 UI 更新
             app_state.proxy_service.set_app_handle(app.handle().clone());
+            app_state
+                .claude_app_service
+                .set_app_handle(app.handle().clone());
 
             // ============================================================
             // 按表独立判断的导入逻辑（各类数据独立检查，互不影响）
@@ -703,21 +710,26 @@ pub fn run() {
             let skill_service = SkillService::new();
             app.manage(commands::skill::SkillServiceState(Arc::new(skill_service)));
 
-            // 初始化 CopilotAuthManager
+            // 初始化 Managed Auth managers
             {
                 use crate::proxy::providers::codex_auto_auth::CodexAutoAuthManager;
                 use crate::proxy::providers::copilot_auth::CopilotAuthManager;
-                use commands::{CodexAutoAuthState, CopilotAuthState};
+                use crate::proxy::providers::gemini_auto_auth::GeminiAutoAuthManager;
+                use commands::{CodexAutoAuthState, CopilotAuthState, GeminiAutoAuthState};
                 use tokio::sync::RwLock;
 
                 let app_config_dir = crate::config::get_app_config_dir();
                 let copilot_auth_manager = CopilotAuthManager::new(app_config_dir.clone());
                 app.manage(CopilotAuthState(Arc::new(RwLock::new(copilot_auth_manager))));
-                let codex_auto_auth_manager = CodexAutoAuthManager::new(app_config_dir);
+                let codex_auto_auth_manager = CodexAutoAuthManager::new(app_config_dir.clone());
                 app.manage(CodexAutoAuthState(Arc::new(RwLock::new(
                     codex_auto_auth_manager,
                 ))));
-                log::info!("✓ CopilotAuthManager initialized");
+                let gemini_auto_auth_manager = GeminiAutoAuthManager::new(app_config_dir);
+                app.manage(GeminiAutoAuthState(Arc::new(RwLock::new(
+                    gemini_auto_auth_manager,
+                ))));
+                log::info!("✓ Managed auth managers initialized");
             }
 
             // 初始化全局出站代理 HTTP 客户端
@@ -989,6 +1001,13 @@ pub fn run() {
             commands::get_proxy_status,
             commands::get_proxy_config,
             commands::update_proxy_config,
+            commands::get_claude_app_bridge_status,
+            commands::activate_claude_app_provider,
+            commands::stop_claude_app_bridge,
+            commands::fetch_claude_app_target_models,
+            commands::get_claude_app_observed_source_models,
+            commands::clear_claude_app_observed_source_models,
+            commands::clear_claude_app_fetched_target_models,
             // Global & Per-App Config
             commands::get_global_proxy_config,
             commands::update_global_proxy_config,

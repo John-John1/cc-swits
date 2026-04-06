@@ -29,6 +29,8 @@ pub struct VisibleApps {
     #[serde(default = "default_true")]
     pub claude: bool,
     #[serde(default = "default_true")]
+    pub claude_app: bool,
+    #[serde(default = "default_true")]
     pub codex: bool,
     #[serde(default = "default_true")]
     pub gemini: bool,
@@ -42,6 +44,7 @@ impl Default for VisibleApps {
     fn default() -> Self {
         Self {
             claude: true,
+            claude_app: true,
             codex: true,
             gemini: true,
             opencode: true,
@@ -228,6 +231,8 @@ pub struct AppSettings {
     /// 当前 Claude 供应商 ID（本地存储，优先于数据库 is_current）
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub current_provider_claude: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub current_provider_claude_app: Option<String>,
     /// 当前 Codex 供应商 ID（本地存储，优先于数据库 is_current）
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub current_provider_codex: Option<String>,
@@ -302,6 +307,7 @@ impl Default for AppSettings {
             opencode_config_dir: None,
             openclaw_config_dir: None,
             current_provider_claude: None,
+            current_provider_claude_app: None,
             current_provider_codex: None,
             current_provider_gemini: None,
             current_provider_opencode: None,
@@ -579,6 +585,19 @@ pub fn get_current_provider(app_type: &AppType) -> Option<String> {
     }
 }
 
+pub fn get_current_provider_for_key(key: &str) -> Option<String> {
+    let settings = settings_store().read().ok()?;
+    match key {
+        "claude" => settings.current_provider_claude.clone(),
+        "claude_app" => settings.current_provider_claude_app.clone(),
+        "codex" => settings.current_provider_codex.clone(),
+        "gemini" => settings.current_provider_gemini.clone(),
+        "opencode" => settings.current_provider_opencode.clone(),
+        "openclaw" => settings.current_provider_openclaw.clone(),
+        _ => None,
+    }
+}
+
 /// 设置指定应用类型的当前供应商 ID（保存到本地 settings）
 ///
 /// 这是设备级别的设置，不随数据库同步。
@@ -591,6 +610,19 @@ pub fn set_current_provider(app_type: &AppType, id: Option<&str>) -> Result<(), 
         AppType::Gemini => settings.current_provider_gemini = id_owned.clone(),
         AppType::OpenCode => settings.current_provider_opencode = id_owned.clone(),
         AppType::OpenClaw => settings.current_provider_openclaw = id_owned.clone(),
+    })
+}
+
+pub fn set_current_provider_for_key(key: &str, id: Option<&str>) -> Result<(), AppError> {
+    let id_owned = id.map(|s| s.to_string());
+    mutate_settings(|settings| match key {
+        "claude" => settings.current_provider_claude = id_owned.clone(),
+        "claude_app" => settings.current_provider_claude_app = id_owned.clone(),
+        "codex" => settings.current_provider_codex = id_owned.clone(),
+        "gemini" => settings.current_provider_gemini = id_owned.clone(),
+        "opencode" => settings.current_provider_opencode = id_owned.clone(),
+        "openclaw" => settings.current_provider_openclaw = id_owned.clone(),
+        _ => {}
     })
 }
 
@@ -627,6 +659,29 @@ pub fn get_effective_current_provider(
 
     // Fallback 到数据库的 is_current
     db.get_current_provider(app_type.as_str())
+}
+
+pub fn get_effective_current_provider_for_keys(
+    db: &crate::database::Database,
+    current_provider_key: &str,
+    provider_source_key: &str,
+) -> Result<Option<String>, AppError> {
+    if let Some(local_id) = get_current_provider_for_key(current_provider_key) {
+        let providers = db.get_all_providers(provider_source_key)?;
+        if providers.contains_key(&local_id) {
+            return Ok(Some(local_id));
+        }
+
+        log::warn!(
+            "Local current provider '{}' for key '{}' no longer exists in '{}', clearing it",
+            local_id,
+            current_provider_key,
+            provider_source_key
+        );
+        let _ = set_current_provider_for_key(current_provider_key, None);
+    }
+
+    db.get_current_provider(provider_source_key)
 }
 
 // ===== Skill 同步方式管理函数 =====

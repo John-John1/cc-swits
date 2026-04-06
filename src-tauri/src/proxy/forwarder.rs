@@ -9,7 +9,10 @@ use super::{
     failover_switch::FailoverSwitchManager,
     log_codes::fwd as log_fwd,
     provider_router::ProviderRouter,
-    providers::{get_adapter, AuthInfo, AuthStrategy, ProviderAdapter, ProviderType},
+    providers::{
+        get_adapter, get_adapter_for_provider_type, AuthInfo, AuthStrategy, ProviderAdapter,
+        ProviderType,
+    },
     thinking_budget_rectifier::{rectify_thinking_budget, should_rectify_thinking_budget},
     thinking_rectifier::{
         normalize_thinking_type, rectify_anthropic_request, should_rectify_thinking_signature,
@@ -17,9 +20,10 @@ use super::{
     types::{CopilotOptimizerConfig, OptimizerConfig, ProxyStatus, RectifierConfig},
     ProxyError,
 };
-use crate::commands::{CodexAutoAuthState, CopilotAuthState};
+use crate::commands::{CodexAutoAuthState, CopilotAuthState, GeminiAutoAuthState};
 use crate::proxy::providers::copilot_auth::CopilotAuthManager;
 use crate::proxy::providers::codex_auto_auth::CODEX_AUTO_BASE_URL;
+use crate::proxy::providers::gemini_auto_auth::GEMINI_AUTO_BASE_URL;
 use crate::{app_config::AppType, provider::Provider};
 use http::Extensions;
 use serde_json::Value;
@@ -107,7 +111,6 @@ impl RequestForwarder {
         providers: Vec<Provider>,
     ) -> Result<ForwardResult, ForwardError> {
         // 获取适配器
-        let adapter = get_adapter(app_type);
         let app_type_str = app_type.as_str();
 
         if providers.is_empty() {
@@ -130,6 +133,14 @@ impl RequestForwarder {
 
         // 依次尝试每个供应商
         for provider in providers.iter() {
+            let provider_type = ProviderType::from_app_type_and_config(app_type, provider);
+            let adapter: Box<dyn ProviderAdapter> = match provider_type {
+                ProviderType::Gemini | ProviderType::GeminiCli => {
+                    get_adapter_for_provider_type(&provider_type)
+                }
+                _ => get_adapter(app_type),
+            };
+
             // 发起请求前先获取熔断器放行许可（HalfOpen 会占用探测名额）
             // 单 Provider 场景下跳过此检查，避免熔断器阻塞所有请求
             let (allowed, used_half_open_permit) = if bypass_circuit_breaker {
@@ -761,11 +772,25 @@ impl RequestForwarder {
             .unwrap_or(false);
 
         // 应用模型映射（独立于格式转换）
-        let (mapped_body, _original_model, _mapped_model) =
-            super::model_mapper::apply_model_mapping(body.clone(), provider);
+        let is_claude_app_takeover =
+            split_endpoint_and_query(endpoint).0 == "/claude-app/v1/messages"
+                && crate::services::claude_app::active_wrapper_model_mapping().is_some();
+        let (mapped_body, _original_model, _mapped_model) = if is_claude_app_takeover {
+            let original = body.get("model").and_then(|m| m.as_str()).map(String::from);
+            (body.clone(), original, None)
+        } else {
+            super::model_mapper::apply_model_mapping(body.clone(), provider)
+        };
 
         // 与 CCH 对齐：请求前不做 thinking 主动改写（仅保留兼容入口）
         let mut mapped_body = normalize_thinking_type(mapped_body);
+        if is_claude_app_takeover {
+            if let Some(target_model) =
+                crate::services::claude_app::active_wrapper_target_model_for_body(&mapped_body)
+            {
+                mapped_body["model"] = serde_json::json!(target_model);
+            }
+        }
 
         // 确定有效端点
         // GitHub Copilot API 使用 /chat/completions（无 /v1 前缀）
@@ -780,6 +805,11 @@ impl RequestForwarder {
             .as_ref()
             .and_then(|m| m.provider_type.as_deref())
             == Some("codex_auto");
+        let is_gemini_auto = provider
+            .meta
+            .as_ref()
+            .and_then(|m| m.provider_type.as_deref())
+            == Some("gemini_auto");
 
         // --- Copilot 优化器：请求体优化 + 分类（在格式转换之前执行） ---
         // 注意：确定性 ID 也在此处计算，因为 mapped_body 在格式转换时会被 move
@@ -836,6 +866,13 @@ impl RequestForwarder {
         } else {
             None
         };
+        if is_claude_app_takeover {
+            if let Some(target_model) =
+                crate::services::claude_app::active_wrapper_target_model_for_body(&mapped_body)
+            {
+                mapped_body["model"] = serde_json::json!(target_model);
+            }
+        }
 
         // GitHub Copilot 动态 endpoint 路由
         // 从 CopilotAuthManager 获取缓存的 API endpoint（支持企业版等非默认 endpoint）
@@ -868,6 +905,9 @@ impl RequestForwarder {
         }
         if is_codex_auto && !is_full_url {
             base_url = CODEX_AUTO_BASE_URL.to_string();
+        }
+        if is_gemini_auto && !is_full_url {
+            base_url = GEMINI_AUTO_BASE_URL.to_string();
         }
         let resolved_claude_api_format = if adapter.name() == "Claude" && is_codex_auto {
             Some("openai_responses".to_string())
@@ -945,7 +985,39 @@ impl RequestForwarder {
 
         // 获取认证头（提前准备，用于内联替换）
         let mut codex_auto_account_id = None;
-        let mut auth_headers = if let Some(mut auth) = adapter.extract_auth(provider) {
+        let managed_gemini_auth = if is_gemini_auto {
+            if let Some(app_handle) = &self.app_handle {
+                let gemini_auto_state = app_handle.state::<GeminiAutoAuthState>();
+                let gemini_auto_auth = gemini_auto_state.0.read().await;
+                let account_id = provider
+                    .meta
+                    .as_ref()
+                    .and_then(|m| m.managed_account_id_for("gemini_auto"));
+
+                let token_result = match &account_id {
+                    Some(id) => gemini_auto_auth.get_valid_token_for_account(id).await,
+                    None => gemini_auto_auth.get_valid_token().await,
+                };
+
+                match token_result {
+                    Ok(token) => Some(AuthInfo::with_access_token(token.clone(), token)),
+                    Err(e) => {
+                        return Err(ProxyError::AuthError(format!(
+                            "Gemini Auto auth failed: {e}"
+                        )));
+                    }
+                }
+            } else {
+                return Err(ProxyError::AuthError(
+                    "Gemini Auto auth unavailable (missing AppHandle)".to_string(),
+                ));
+            }
+        } else {
+            None
+        };
+        let mut auth_headers = if let Some(mut auth) =
+            adapter.extract_auth(provider).or(managed_gemini_auth)
+        {
             // GitHub Copilot 特殊处理：从 CopilotAuthManager 获取真实 token
             if auth.strategy == AuthStrategy::GitHubCopilot {
                 if let Some(app_handle) = &self.app_handle {
@@ -1629,7 +1701,10 @@ fn strip_beta_query(query: Option<&str>) -> Option<String> {
 }
 
 fn is_claude_messages_path(path: &str) -> bool {
-    matches!(path, "/v1/messages" | "/claude/v1/messages")
+    matches!(
+        path,
+        "/v1/messages" | "/claude/v1/messages" | "/claude-app/v1/messages"
+    )
 }
 
 fn rewrite_claude_transform_endpoint(
@@ -1848,6 +1923,19 @@ mod tests {
     fn rewrite_claude_transform_endpoint_uses_codex_auto_responses_path() {
         let (endpoint, passthrough_query) = rewrite_claude_transform_endpoint(
             "/v1/messages?beta=true&x-id=1",
+            "openai_responses",
+            false,
+            true,
+        );
+
+        assert_eq!(endpoint, "/responses?x-id=1");
+        assert_eq!(passthrough_query.as_deref(), Some("x-id=1"));
+    }
+
+    #[test]
+    fn rewrite_claude_app_messages_endpoint_uses_codex_auto_responses_path() {
+        let (endpoint, passthrough_query) = rewrite_claude_transform_endpoint(
+            "/claude-app/v1/messages?beta=true&x-id=1",
             "openai_responses",
             false,
             true,

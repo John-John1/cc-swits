@@ -195,6 +195,28 @@ pub struct ProviderProxyConfig {
     pub proxy_password: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ClaudeAppModelMapping {
+    #[serde(rename = "defaultModel", skip_serializing_if = "Option::is_none")]
+    pub default_model: Option<String>,
+    #[serde(rename = "haikuModel", skip_serializing_if = "Option::is_none")]
+    pub haiku_model: Option<String>,
+    #[serde(rename = "sonnetModel", skip_serializing_if = "Option::is_none")]
+    pub sonnet_model: Option<String>,
+    #[serde(rename = "opusModel", skip_serializing_if = "Option::is_none")]
+    pub opus_model: Option<String>,
+    #[serde(rename = "thinkingModel", skip_serializing_if = "Option::is_none")]
+    pub thinking_model: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ClaudeAppExactModelMappingEntry {
+    #[serde(rename = "sourceModel")]
+    pub source_model: String,
+    #[serde(rename = "targetModel")]
+    pub target_model: String,
+}
+
 /// 认证绑定来源
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
@@ -287,6 +309,34 @@ pub struct ProviderMeta {
     /// If not set, provider ID is used automatically during format conversion.
     #[serde(rename = "promptCacheKey", skip_serializing_if = "Option::is_none")]
     pub prompt_cache_key: Option<String>,
+    /// Claude App takeover 专用模型映射。
+    /// 仅用于官方 Claude App 接管时的模型重写，不影响普通 Claude/CLI 配置。
+    #[serde(
+        rename = "claudeAppModelMapping",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub claude_app_model_mapping: Option<ClaudeAppModelMapping>,
+    /// Claude App 精确模型映射（优先于家族映射）
+    #[serde(
+        rename = "claudeAppExactModelMappings",
+        default,
+        skip_serializing_if = "Vec::is_empty"
+    )]
+    pub claude_app_exact_model_mappings: Vec<ClaudeAppExactModelMappingEntry>,
+    /// 运行中自动发现的 Claude App 原始模型名（去重持久化）
+    #[serde(
+        rename = "claudeAppObservedSourceModels",
+        default,
+        skip_serializing_if = "Vec::is_empty"
+    )]
+    pub claude_app_observed_source_models: Vec<String>,
+    /// 通过按钮获取并持久化的目标 provider 可用模型名（去重）
+    #[serde(
+        rename = "claudeAppFetchedTargetModels",
+        default,
+        skip_serializing_if = "Vec::is_empty"
+    )]
+    pub claude_app_fetched_target_models: Vec<String>,
     /// 累加模式应用中，该 provider 是否已写入 live config。
     /// `None` 表示旧数据/未知状态，`Some(false)` 表示明确仅存在于数据库中。
     #[serde(rename = "liveConfigManaged", skip_serializing_if = "Option::is_none")]

@@ -2,7 +2,9 @@
 use crate::app_config::AppType;
 use crate::commands::codex_auto::CodexAutoAuthState;
 use crate::commands::copilot::CopilotAuthState;
+use crate::commands::gemini_auto::GeminiAutoAuthState;
 use crate::error::AppError;
+use crate::proxy::providers::gemini_auto_auth::GEMINI_AUTO_BASE_URL;
 use crate::services::stream_check::{
     HealthStatus, StreamCheckConfig, StreamCheckResult, StreamCheckService,
 };
@@ -15,6 +17,7 @@ pub async fn stream_check_provider(
     state: State<'_, AppState>,
     copilot_state: State<'_, CopilotAuthState>,
     codex_auto_state: State<'_, CodexAutoAuthState>,
+    gemini_auto_state: State<'_, GeminiAutoAuthState>,
     app_type: AppType,
     provider_id: String,
 ) -> Result<StreamCheckResult, AppError> {
@@ -25,9 +28,18 @@ pub async fn stream_check_provider(
         .get(&provider_id)
         .ok_or_else(|| AppError::Message(format!("Provider {provider_id} does not exist")))?;
 
-    let auth_override =
-        resolve_managed_auth_override(provider, &copilot_state, &codex_auto_state).await?;
-    let base_url_override = resolve_copilot_base_url_override(provider, &copilot_state).await?;
+    let auth_override = resolve_managed_auth_override(
+        provider,
+        &copilot_state,
+        &codex_auto_state,
+        &gemini_auto_state,
+    )
+    .await?;
+    let base_url_override = resolve_managed_base_url_override(
+        provider,
+        &copilot_state,
+    )
+    .await?;
     let claude_api_format_override = resolve_claude_api_format_override(
         &app_type,
         provider,
@@ -59,6 +71,7 @@ pub async fn stream_check_all_providers(
     state: State<'_, AppState>,
     copilot_state: State<'_, CopilotAuthState>,
     codex_auto_state: State<'_, CodexAutoAuthState>,
+    gemini_auto_state: State<'_, GeminiAutoAuthState>,
     app_type: AppType,
     proxy_targets_only: bool,
 ) -> Result<Vec<(String, StreamCheckResult)>, AppError> {
@@ -88,10 +101,18 @@ pub async fn stream_check_all_providers(
             }
         }
 
-        let auth_override =
-            resolve_managed_auth_override(&provider, &copilot_state, &codex_auto_state).await?;
-        let base_url_override =
-            resolve_copilot_base_url_override(&provider, &copilot_state).await?;
+        let auth_override = resolve_managed_auth_override(
+            &provider,
+            &copilot_state,
+            &codex_auto_state,
+            &gemini_auto_state,
+        )
+        .await?;
+        let base_url_override = resolve_managed_base_url_override(
+            &provider,
+            &copilot_state,
+        )
+        .await?;
         let claude_api_format_override = resolve_claude_api_format_override(
             &app_type,
             &provider,
@@ -156,6 +177,7 @@ async fn resolve_managed_auth_override(
     provider: &crate::provider::Provider,
     copilot_state: &State<'_, CopilotAuthState>,
     codex_auto_state: &State<'_, CodexAutoAuthState>,
+    gemini_auto_state: &State<'_, GeminiAutoAuthState>,
 ) -> Result<Option<crate::proxy::providers::AuthInfo>, AppError> {
     if is_copilot_provider(provider) {
         let auth_manager = copilot_state.0.read().await;
@@ -205,13 +227,48 @@ async fn resolve_managed_auth_override(
         )));
     }
 
+    if is_gemini_auto_provider(provider) {
+        let auth_manager = gemini_auto_state.0.read().await;
+        let account_id = provider
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.managed_account_id_for("gemini_auto"));
+
+        let token = match account_id.as_deref() {
+            Some(id) => auth_manager
+                .get_valid_token_for_account(id)
+                .await
+                .map_err(|e| AppError::Message(format!("Gemini Auto auth failed: {e}")))?,
+            None => auth_manager
+                .get_valid_token()
+                .await
+                .map_err(|e| AppError::Message(format!("Gemini Auto auth failed: {e}")))?,
+        };
+
+        return Ok(Some(crate::proxy::providers::AuthInfo::new(
+            token,
+            crate::proxy::providers::AuthStrategy::GoogleOAuth,
+        )));
+    }
+
     Ok(None)
 }
 
-async fn resolve_copilot_base_url_override(
+async fn resolve_managed_base_url_override(
     provider: &crate::provider::Provider,
     copilot_state: &State<'_, CopilotAuthState>,
 ) -> Result<Option<String>, AppError> {
+    if is_gemini_auto_provider(provider) {
+        let is_full_url = provider
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.is_full_url)
+            .unwrap_or(false);
+        if !is_full_url {
+            return Ok(Some(GEMINI_AUTO_BASE_URL.to_string()));
+        }
+    }
+
     let is_copilot = is_copilot_provider(provider);
     let is_full_url = provider
         .meta
@@ -257,6 +314,14 @@ fn is_codex_auto_provider(provider: &crate::provider::Provider) -> bool {
         .as_ref()
         .and_then(|meta| meta.provider_type.as_deref())
         == Some("codex_auto")
+}
+
+fn is_gemini_auto_provider(provider: &crate::provider::Provider) -> bool {
+    provider
+        .meta
+        .as_ref()
+        .and_then(|meta| meta.provider_type.as_deref())
+        == Some("gemini_auto")
 }
 
 async fn resolve_claude_api_format_override(

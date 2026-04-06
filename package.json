@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "pnpm tauri dev",
     "build": "pnpm tauri build",
-    "build:win:exe": "powershell -ExecutionPolicy Bypass -File scripts/build-windows-exe.ps1",
+    "build:win:exe": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-windows-exe.ps1",
     "tauri": "tauri",
     "dev:renderer": "vite",
     "build:renderer": "vite build",

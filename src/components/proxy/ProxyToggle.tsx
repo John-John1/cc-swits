@@ -22,6 +22,10 @@ export function ProxyToggle({ className, activeApp }: ProxyToggleProps) {
   const { isRunning, takeoverStatus, setTakeoverForApp, isPending, status } =
     useProxyStatus();
 
+  if (activeApp === "claudeApp") {
+    return null;
+  }
+
   const handleToggle = async (checked: boolean) => {
     try {
       await setTakeoverForApp({ appType: activeApp, enabled: checked });

@@ -1,13 +1,11 @@
 import { useMemo } from "react";
 import type { AppId } from "@/lib/api";
-import type { ProviderPreset } from "@/config/claudeProviderPresets";
-import type { CodexProviderPreset } from "@/config/codexProviderPresets";
 import type { ProviderMeta, EndpointCandidate } from "@/types";
 import { extractCodexBaseUrl } from "@/utils/providerConfigUtils";
 
 type PresetEntry = {
   id: string;
-  preset: ProviderPreset | CodexProviderPreset;
+  preset: object;
 };
 
 interface UseSpeedTestEndpointsProps {
@@ -78,8 +76,13 @@ export function useSpeedTestEndpoints({
     if (selectedPresetId && selectedPresetId !== "custom") {
       const entry = presetEntries.find((item) => item.id === selectedPresetId);
       if (entry) {
-        const preset = entry.preset as ProviderPreset & {
-          settingsConfig?: { env?: { GOOGLE_GEMINI_BASE_URL?: string } };
+        const preset = entry.preset as {
+          settingsConfig?: {
+            env?: {
+              ANTHROPIC_BASE_URL?: string;
+              GOOGLE_GEMINI_BASE_URL?: string;
+            };
+          };
           endpointCandidates?: string[];
         };
         // 添加预设自己的 baseUrl（兼容 Claude/Gemini）
@@ -138,7 +141,10 @@ export function useSpeedTestEndpoints({
     if (selectedPresetId && selectedPresetId !== "custom") {
       const entry = presetEntries.find((item) => item.id === selectedPresetId);
       if (entry) {
-        const preset = entry.preset as CodexProviderPreset;
+        const preset = entry.preset as {
+          config?: string;
+          endpointCandidates?: string[];
+        };
         // 添加预设自己的 baseUrl
         const presetConfig = preset.config || "";
         const presetBaseUrl = extractCodexBaseUrl(presetConfig);

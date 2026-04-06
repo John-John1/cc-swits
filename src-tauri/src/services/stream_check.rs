@@ -14,6 +14,7 @@ use crate::error::AppError;
 use crate::provider::Provider;
 use crate::proxy::providers::codex_auto_auth::CODEX_AUTO_RESPONSES_URL;
 use crate::proxy::providers::copilot_auth;
+use crate::proxy::providers::gemini_auto_auth::GEMINI_AUTO_BASE_URL;
 use crate::proxy::providers::transform::anthropic_to_openai;
 use crate::proxy::providers::transform_responses::{
     anthropic_to_responses, augment_codex_auto_responses,
@@ -255,6 +256,7 @@ impl StreamCheckService {
                     &model_to_test,
                     test_prompt,
                     request_timeout,
+                    provider,
                 )
                 .await
             }
@@ -324,6 +326,25 @@ impl StreamCheckService {
         claude_api_format_override: Option<&str>,
     ) -> Result<(u16, String), AppError> {
         let base = base_url.trim_end_matches('/');
+        let is_gemini_auto = provider
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.provider_type.as_deref())
+            == Some("gemini_auto")
+            || auth.strategy == AuthStrategy::GoogleOAuth
+            || base.starts_with(GEMINI_AUTO_BASE_URL);
+
+        if is_gemini_auto {
+            return Self::check_gemini_code_assist_stream(
+                client,
+                base,
+                auth,
+                model,
+                test_prompt,
+                timeout,
+            )
+            .await;
+        }
         let is_github_copilot = auth.strategy == AuthStrategy::GitHubCopilot;
         let is_codex_auto = provider
             .meta
@@ -595,6 +616,7 @@ impl StreamCheckService {
         model: &str,
         test_prompt: &str,
         timeout: std::time::Duration,
+        provider: &Provider,
     ) -> Result<(u16, String), AppError> {
         let base = base_url.trim_end_matches('/');
         // Gemini 原生 API: /v1beta/models/{model}:streamGenerateContent?alt=sse
@@ -630,6 +652,64 @@ impl StreamCheckService {
         if !response.status().is_success() {
             let error_text = response.text().await.unwrap_or_default();
             return Err(AppError::Message(format!("HTTP {status}: {error_text}")));
+        }
+
+        let mut stream = response.bytes_stream();
+        if let Some(chunk) = stream.next().await {
+            match chunk {
+                Ok(_) => Ok((status, model.to_string())),
+                Err(e) => Err(AppError::Message(format!("Stream read failed: {e}"))),
+            }
+        } else {
+            Err(AppError::Message("No response data received".to_string()))
+        }
+    }
+
+    async fn check_gemini_code_assist_stream(
+        client: &Client,
+        base: &str,
+        auth: &AuthInfo,
+        model: &str,
+        test_prompt: &str,
+        timeout: std::time::Duration,
+    ) -> Result<(u16, String), AppError> {
+        let url = if base.contains("/v1internal") {
+            format!("{base}:streamGenerateContent?alt=sse")
+        } else {
+            format!("{base}/v1internal:streamGenerateContent?alt=sse")
+        };
+
+        let body = json!({
+            "model": model,
+            "request": {
+                "contents": [{
+                    "role": "user",
+                    "parts": [{ "text": test_prompt }]
+                }]
+            }
+        });
+
+        let response = client
+            .post(&url)
+            .header(
+                "authorization",
+                format!("Bearer {}", auth.access_token.as_deref().unwrap_or(&auth.api_key)),
+            )
+            .header("content-type", "application/json")
+            .header("accept", "text/event-stream")
+            .header("accept-encoding", "identity")
+            .header("x-goog-api-client", "cc-switch/3.12.3")
+            .timeout(timeout)
+            .json(&body)
+            .send()
+            .await
+            .map_err(Self::map_request_error)?;
+
+        let status = response.status().as_u16();
+
+        if !response.status().is_success() {
+            let error_text = response.text().await.unwrap_or_default();
+            return Err(AppError::Message(format!("HTTP {status}: {error_text} ({url})")));
         }
 
         let mut stream = response.bytes_stream();

@@ -7,7 +7,9 @@ $outputRoot = "E:\cc_myself"
 $buildRoot = Join-Path $outputRoot "cc-switch"
 $distDir = Join-Path $buildRoot "dist"
 $targetDir = Join-Path $buildRoot "target"
-$configPath = Join-Path $buildRoot "tauri.no-bundle.local.json"
+$builtExe = Join-Path $targetDir "release\cc-switch.exe"
+$tempConfigDir = Join-Path $env:TEMP "cc-switch-build"
+$configPath = Join-Path $tempConfigDir ("tauri.no-bundle.{0}.json" -f ([guid]::NewGuid().ToString("N")))
 $finalExePath = Join-Path $outputRoot "cc-switch.exe"
 $cargoBin = Join-Path $env:USERPROFILE ".cargo\bin"
 $repoDistLink = Join-Path $repoRoot "dist"
@@ -58,6 +60,10 @@ New-Item -ItemType Directory -Force -Path $outputRoot | Out-Null
 New-Item -ItemType Directory -Force -Path $buildRoot | Out-Null
 New-Item -ItemType Directory -Force -Path $distDir | Out-Null
 New-Item -ItemType Directory -Force -Path $targetDir | Out-Null
+New-Item -ItemType Directory -Force -Path $tempConfigDir | Out-Null
+
+Stop-ProcessUsingPath -Path $builtExe
+Stop-ProcessUsingPath -Path $finalExePath
 
 $overrideConfig = @"
 {
@@ -98,13 +104,14 @@ try {
   Pop-Location
 
   Remove-JunctionIfExists -Path $repoDistLink
+  if (Test-Path $configPath) {
+    Remove-Item -LiteralPath $configPath -Force -ErrorAction SilentlyContinue
+  }
 }
 
-$builtExe = Join-Path $targetDir "release\cc-switch.exe"
 if (-not (Test-Path $builtExe)) {
   throw "Built exe not found: $builtExe"
 }
 
-Stop-ProcessUsingPath -Path $finalExePath
 Copy-Item -Force -LiteralPath $builtExe -Destination $finalExePath
 Write-Host "Built exe: $finalExePath"

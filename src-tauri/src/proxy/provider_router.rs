@@ -2,13 +2,11 @@
 //!
 //! 负责选择和管理代理目标供应商，实现智能故障转移
 
-use crate::app_config::AppType;
 use crate::database::Database;
 use crate::error::AppError;
 use crate::provider::Provider;
 use crate::proxy::circuit_breaker::{AllowResult, CircuitBreaker, CircuitBreakerConfig};
 use std::collections::HashMap;
-use std::str::FromStr;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
@@ -34,28 +32,42 @@ impl ProviderRouter {
     /// 返回按优先级排序的可用供应商列表：
     /// - 故障转移关闭时：仅返回当前供应商
     /// - 故障转移开启时：仅使用故障转移队列，按队列顺序依次尝试（P1 → P2 → ...）
-    pub async fn select_providers(&self, app_type: &str) -> Result<Vec<Provider>, AppError> {
+pub async fn select_providers(&self, app_type: &str) -> Result<Vec<Provider>, AppError> {
+        self.select_providers_for_keys(app_type, app_type, app_type, app_type)
+            .await
+    }
+
+    pub async fn select_providers_for_keys(
+        &self,
+        route_app_type: &str,
+        provider_source_app: &str,
+        current_provider_key: &str,
+        proxy_config_key: &str,
+    ) -> Result<Vec<Provider>, AppError> {
         let mut result = Vec::new();
         let mut total_providers = 0usize;
         let mut circuit_open_count = 0usize;
 
         // 检查该应用的自动故障转移开关是否开启（从 proxy_config 表读取）
-        let auto_failover_enabled = match self.db.get_proxy_config_for_app(app_type).await {
+        let auto_failover_enabled =
+            match self.db.get_proxy_config_for_app(proxy_config_key).await {
             Ok(config) => config.auto_failover_enabled,
             Err(e) => {
-                log::error!("[{app_type}] 读取 proxy_config 失败: {e}，默认禁用故障转移");
+                log::error!(
+                    "[{route_app_type}] 读取 proxy_config 失败: {e}，默认禁用故障转移"
+                );
                 false
             }
         };
 
         if auto_failover_enabled {
             // 故障转移开启：仅按队列顺序依次尝试（P1 → P2 → ...）
-            let all_providers = self.db.get_all_providers(app_type)?;
+            let all_providers = self.db.get_all_providers(provider_source_app)?;
 
             // 使用 DAO 返回的排序结果，确保和前端展示一致
             let ordered_ids: Vec<String> = self
                 .db
-                .get_failover_queue(app_type)?
+                .get_failover_queue(provider_source_app)?
                 .into_iter()
                 .map(|item| item.provider_id)
                 .collect();
@@ -67,7 +79,7 @@ impl ProviderRouter {
                     continue;
                 };
 
-                let circuit_key = format!("{app_type}:{}", provider.id);
+                let circuit_key = format!("{route_app_type}:{}", provider.id);
                 let breaker = self.get_or_create_circuit_breaker(&circuit_key).await;
 
                 if breaker.is_available().await {
@@ -78,17 +90,23 @@ impl ProviderRouter {
             }
         } else {
             // 故障转移关闭：仅使用当前供应商，跳过熔断器检查
-            let current_id = AppType::from_str(app_type)
-                .ok()
-                .and_then(|app_enum| {
-                    crate::settings::get_effective_current_provider(&self.db, &app_enum)
-                        .ok()
-                        .flatten()
-                })
-                .or_else(|| self.db.get_current_provider(app_type).ok().flatten());
+            let current_id = crate::settings::get_effective_current_provider_for_keys(
+                &self.db,
+                current_provider_key,
+                provider_source_app,
+            )?;
+            let current_id = if current_provider_key == "claude_app" {
+                crate::services::claude_app::active_wrapper_provider_id()
+                    .or(current_id)
+                    .or_else(|| self.db.get_current_provider(provider_source_app).ok().flatten())
+            } else {
+                current_id.or_else(|| self.db.get_current_provider(provider_source_app).ok().flatten())
+            };
 
             if let Some(current_id) = current_id {
-                if let Some(current) = self.db.get_provider_by_id(&current_id, app_type)? {
+                if let Some(current) =
+                    self.db.get_provider_by_id(&current_id, provider_source_app)?
+                {
                     total_providers = 1;
                     result.push(current);
                 }
@@ -97,10 +115,10 @@ impl ProviderRouter {
 
         if result.is_empty() {
             if total_providers > 0 && circuit_open_count == total_providers {
-                log::warn!("[{app_type}] [FO-004] 所有供应商均已熔断");
+                log::warn!("[{route_app_type}] [FO-004] 所有供应商均已熔断");
                 return Err(AppError::AllProvidersCircuitOpen);
             } else {
-                log::warn!("[{app_type}] [FO-005] 未配置供应商");
+                log::warn!("[{route_app_type}] [FO-005] 未配置供应商");
                 return Err(AppError::NoProvidersConfigured);
             }
         }

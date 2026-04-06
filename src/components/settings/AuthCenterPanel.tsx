@@ -1,7 +1,8 @@
-import { Bot, Github, ShieldCheck } from "lucide-react";
+import { Bot, Github, ShieldCheck, Sparkles } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { CopilotAuthSection } from "@/components/providers/forms/CopilotAuthSection";
 import { CodexAutoAuthSection } from "@/components/providers/forms/CodexAutoAuthSection";
+import { GeminiAutoAuthSection } from "@/components/providers/forms/GeminiAutoAuthSection";
 import { Badge } from "@/components/ui/badge";
 
 export function AuthCenterPanel() {
@@ -69,6 +70,25 @@ export function AuthCenterPanel() {
         </div>
 
         <CodexAutoAuthSection />
+      </section>
+
+      <section className="rounded-xl border border-border/60 bg-card/60 p-6">
+        <div className="mb-4 flex items-center gap-3">
+          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-muted">
+            <Sparkles className="h-5 w-5" />
+          </div>
+          <div>
+            <h4 className="font-medium">Gemini Auto</h4>
+            <p className="text-sm text-muted-foreground">
+              {t("settings.authCenter.geminiAutoDescription", {
+                defaultValue:
+                  "绠＄悊 Google OAuth 璐﹀彿锛屼负 Gemini / Claude / Codex 鎻愪緵鍙鐢ㄧ殑鎵樼璁よ瘉銆?",
+              })}
+            </p>
+          </div>
+        </div>
+
+        <GeminiAutoAuthSection />
       </section>
     </div>
   );

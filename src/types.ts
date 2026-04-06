@@ -125,6 +125,19 @@ export interface ProviderProxyConfig {
   proxyPassword?: string;
 }
 
+export interface ClaudeAppModelMapping {
+  defaultModel?: string;
+  haikuModel?: string;
+  sonnetModel?: string;
+  opusModel?: string;
+  thinkingModel?: string;
+}
+
+export interface ClaudeAppExactModelMapping {
+  sourceModel: string;
+  targetModel: string;
+}
+
 export type AuthBindingSource = "provider_config" | "managed_account";
 
 export interface AuthBinding {
@@ -168,6 +181,11 @@ export interface ProviderMeta {
   isFullUrl?: boolean;
   // Prompt cache key for OpenAI-compatible endpoints (improves cache hit rate)
   promptCacheKey?: string;
+  // Claude App takeover 专用模型映射
+  claudeAppModelMapping?: ClaudeAppModelMapping;
+  claudeAppExactModelMappings?: ClaudeAppExactModelMapping[];
+  claudeAppObservedSourceModels?: string[];
+  claudeAppFetchedTargetModels?: string[];
   // 供应商类型（用于识别 Copilot 等特殊供应商）
   providerType?: string;
   // GitHub Copilot 关联账号 ID（旧字段，保留兼容读取）
@@ -189,6 +207,7 @@ export type ClaudeApiKeyField = "ANTHROPIC_AUTH_TOKEN" | "ANTHROPIC_API_KEY";
 // 主页面显示的应用配置
 export interface VisibleApps {
   claude: boolean;
+  claudeApp: boolean;
   codex: boolean;
   gemini: boolean;
   opencode: boolean;
@@ -284,6 +303,7 @@ export interface Settings {
   // ===== 当前供应商 ID（设备级）=====
   // 当前 Claude 供应商 ID（优先于数据库 is_current）
   currentProviderClaude?: string;
+  currentProviderClaudeApp?: string;
   // 当前 Codex 供应商 ID（优先于数据库 is_current）
   currentProviderCodex?: string;
   // 当前 Gemini 供应商 ID（优先于数据库 is_current）

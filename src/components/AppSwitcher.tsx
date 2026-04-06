@@ -10,7 +10,14 @@ interface AppSwitcherProps {
   compact?: boolean;
 }
 
-const ALL_APPS: AppId[] = ["claude", "codex", "gemini", "opencode", "openclaw"];
+const ALL_APPS: AppId[] = [
+  "claude",
+  "claudeApp",
+  "codex",
+  "gemini",
+  "opencode",
+  "openclaw",
+];
 const STORAGE_KEY = "cc-switch-last-app";
 
 export function AppSwitcher({
@@ -27,6 +34,7 @@ export function AppSwitcher({
   const iconSize = 20;
   const appIconName: Record<AppId, string> = {
     claude: "claude",
+    claudeApp: "claude",
     codex: "openai",
     gemini: "gemini",
     opencode: "opencode",
@@ -34,6 +42,7 @@ export function AppSwitcher({
   };
   const appDisplayName: Record<AppId, string> = {
     claude: "Claude",
+    claudeApp: "Claude App",
     codex: "Codex",
     gemini: "Gemini",
     opencode: "OpenCode",

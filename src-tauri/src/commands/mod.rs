@@ -1,6 +1,7 @@
 #![allow(non_snake_case)]
 
 mod auth;
+mod claude_app;
 mod coding_plan;
 mod config;
 mod copilot;
@@ -8,6 +9,7 @@ mod codex_auto;
 mod deeplink;
 mod env;
 mod failover;
+mod gemini_auto;
 mod global_proxy;
 mod import_export;
 mod mcp;
@@ -32,6 +34,7 @@ mod webdav_sync;
 mod workspace;
 
 pub use auth::*;
+pub use claude_app::*;
 pub use coding_plan::*;
 pub use config::*;
 pub use copilot::*;
@@ -39,6 +42,7 @@ pub use codex_auto::*;
 pub use deeplink::*;
 pub use env::*;
 pub use failover::*;
+pub use gemini_auto::*;
 pub use global_proxy::*;
 pub use import_export::*;
 pub use mcp::*;

@@ -24,6 +24,7 @@ export const settingsSchema = z.object({
 
   // 当前供应商 ID（设备级）
   currentProviderClaude: z.string().optional(),
+  currentProviderClaudeApp: z.string().optional(),
   currentProviderCodex: z.string().optional(),
   currentProviderGemini: z.string().optional(),
 

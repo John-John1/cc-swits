@@ -16,6 +16,7 @@ import type {
   ProviderProxyConfig,
   ClaudeApiFormat,
   ClaudeApiKeyField,
+  ClaudeAppExactModelMapping,
 } from "@/types";
 import {
   providerPresets,
@@ -83,6 +84,7 @@ import {
   useOpenclawFormState,
   useCopilotAuth,
   useCodexAutoAuth,
+  useGeminiAutoAuth,
 } from "./hooks";
 import {
   CLAUDE_DEFAULT_CONFIG,
@@ -186,9 +188,9 @@ export function ProviderForm({
       initialData?.meta?.costMultiplier !== undefined ||
       initialData?.meta?.pricingModelSource !== undefined,
     costMultiplier: initialData?.meta?.costMultiplier,
-    pricingModelSource: normalizePricingSource(
-      initialData?.meta?.pricingModelSource,
-    ),
+      pricingModelSource: normalizePricingSource(
+        initialData?.meta?.pricingModelSource,
+      ),
   }));
 
   const { category } = useProviderCategory({
@@ -223,6 +225,15 @@ export function ProviderForm({
         initialData?.meta?.pricingModelSource,
       ),
     });
+    setClaudeAppExactModelMappings(
+      initialData?.meta?.claudeAppExactModelMappings ?? [],
+    );
+    setClaudeAppObservedSourceModels(
+      initialData?.meta?.claudeAppObservedSourceModels ?? [],
+    );
+    setClaudeAppFetchedTargetModels(
+      initialData?.meta?.claudeAppFetchedTargetModels ?? [],
+    );
   }, [appId, initialData, supportsFullUrl]);
 
   const defaultValues: ProviderFormData = useMemo(
@@ -311,6 +322,23 @@ export function ProviderForm({
     onConfigChange: handleSettingsConfigChange,
   });
 
+  const [claudeAppExactModelMappings, setClaudeAppExactModelMappings] =
+    useState<ClaudeAppExactModelMapping[]>(
+      () => initialData?.meta?.claudeAppExactModelMappings ?? [],
+    );
+  const [claudeAppObservedSourceModels, setClaudeAppObservedSourceModels] =
+    useState<string[]>(
+      () => initialData?.meta?.claudeAppObservedSourceModels ?? [],
+    );
+  const [claudeAppFetchedTargetModels, setClaudeAppFetchedTargetModels] =
+    useState<string[]>(
+      () => initialData?.meta?.claudeAppFetchedTargetModels ?? [],
+    );
+  const [isFetchingClaudeAppTargetModels, setIsFetchingClaudeAppTargetModels] =
+    useState(false);
+  const [isRefreshingClaudeAppObservedModels, setIsRefreshingClaudeAppObservedModels] =
+    useState(false);
+
   const [localApiFormat, setLocalApiFormat] = useState<ClaudeApiFormat>(() => {
     if (appId !== "claude") return "anthropic";
     return initialData?.meta?.apiFormat ?? "anthropic";
@@ -318,6 +346,17 @@ export function ProviderForm({
 
   const handleApiFormatChange = useCallback((format: ClaudeApiFormat) => {
     setLocalApiFormat(format);
+  }, []);
+
+  const looksLikeClaudeSourceModel = useCallback((value: string) => {
+    const normalized = value.trim().toLowerCase();
+    if (!normalized) return false;
+    return (
+      normalized.startsWith("claude-") ||
+      /^haiku\b/.test(normalized) ||
+      /^sonnet\b/.test(normalized) ||
+      /^opus\b/.test(normalized)
+    );
   }, []);
 
   const handleApiKeyFieldChange = useCallback(
@@ -344,9 +383,104 @@ export function ProviderForm({
     [localApiKeyField, form, handleSettingsConfigChange],
   );
 
+  const handleClaudeAppExactModelMappingChange = useCallback(
+    (index: number, field: keyof ClaudeAppExactModelMapping, value: string) => {
+      setClaudeAppExactModelMappings((current) =>
+        current.map((entry, entryIndex) =>
+          entryIndex === index ? { ...entry, [field]: value } : entry,
+        ),
+      );
+    },
+    [],
+  );
+
+  const handleAddClaudeAppExactModelMapping = useCallback(() => {
+    setClaudeAppExactModelMappings((current) => [
+      ...current,
+      { sourceModel: "", targetModel: "" },
+    ]);
+  }, []);
+
+  const handleRemoveClaudeAppExactModelMapping = useCallback((index: number) => {
+    setClaudeAppExactModelMappings((current) =>
+      current.filter((_, entryIndex) => entryIndex !== index),
+    );
+  }, []);
+
+  const handleFetchClaudeAppTargetModels = useCallback(async () => {
+    if (!providerId) {
+      toast.info("请先保存 provider，再获取可用目标模型。");
+      return;
+    }
+    setIsFetchingClaudeAppTargetModels(true);
+    try {
+      const models = await providersApi.fetchClaudeAppTargetModels(providerId);
+      setClaudeAppFetchedTargetModels(models);
+      toast.success(`已获取 ${models.length} 个目标模型`);
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : String(error ?? "获取模型失败"),
+      );
+    } finally {
+      setIsFetchingClaudeAppTargetModels(false);
+    }
+  }, [providerId]);
+
+  const handleRefreshClaudeAppObservedModels = useCallback(async () => {
+    if (!providerId) {
+      return;
+    }
+    setIsRefreshingClaudeAppObservedModels(true);
+    try {
+      const models = await providersApi.getClaudeAppObservedSourceModels(providerId);
+      setClaudeAppObservedSourceModels(models);
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : String(error ?? "同步源模型失败"),
+      );
+    } finally {
+      setIsRefreshingClaudeAppObservedModels(false);
+    }
+  }, [providerId]);
+
+  const handleClearClaudeAppObservedModels = useCallback(async () => {
+    if (!providerId) {
+      setClaudeAppObservedSourceModels([]);
+      return;
+    }
+    try {
+      const models =
+        await providersApi.clearClaudeAppObservedSourceModels(providerId);
+      setClaudeAppObservedSourceModels(models);
+      toast.success("已清空已发现的官方 App 源模型名");
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : String(error ?? "清空失败"),
+      );
+    }
+  }, [providerId]);
+
+  const handleClearClaudeAppFetchedTargetModels = useCallback(async () => {
+    if (!providerId) {
+      setClaudeAppFetchedTargetModels([]);
+      return;
+    }
+    try {
+      const models =
+        await providersApi.clearClaudeAppFetchedTargetModels(providerId);
+      setClaudeAppFetchedTargetModels(models);
+      toast.success("已清空已获取的目标模型名");
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : String(error ?? "清空失败"),
+      );
+    }
+  }, [providerId]);
+
   // Managed OAuth 认证状态（仅 Claude 应用需要）
   const { isAuthenticated: isCopilotAuthenticated } = useCopilotAuth();
   const { isAuthenticated: isCodexAutoAuthenticated } = useCodexAutoAuth();
+  const { isAuthenticated: isGeminiAutoAuthenticated } = useGeminiAutoAuth();
 
   const [selectedGitHubAccountId, setSelectedGitHubAccountId] = useState<
     string | null
@@ -354,6 +488,10 @@ export function ProviderForm({
   const [selectedCodexAutoAccountId, setSelectedCodexAutoAccountId] = useState<
     string | null
   >(() => resolveManagedAccountId(initialData?.meta, "codex_auto"));
+  const [selectedGeminiAutoAccountId, setSelectedGeminiAutoAccountId] =
+    useState<string | null>(() =>
+      resolveManagedAccountId(initialData?.meta, "gemini_auto"),
+    );
 
   const {
     codexAuth,
@@ -704,21 +842,30 @@ export function ProviderForm({
   const isCodexAutoProvider =
     templatePreset?.providerType === "codex_auto" ||
     initialData?.meta?.providerType === "codex_auto";
+  const isGeminiAutoProvider =
+    templatePreset?.providerType === "gemini_auto" ||
+    initialData?.meta?.providerType === "gemini_auto";
   const managedAuthProvider = isCopilotProvider
     ? "github_copilot"
     : isCodexAutoProvider
       ? "codex_auto"
+      : isGeminiAutoProvider
+        ? "gemini_auto"
       : null;
   const isManagedOAuthProvider = managedAuthProvider !== null;
   const isManagedAuthAuthenticated = isCopilotProvider
     ? isCopilotAuthenticated
     : isCodexAutoProvider
       ? isCodexAutoAuthenticated
+      : isGeminiAutoProvider
+        ? isGeminiAutoAuthenticated
       : false;
   const selectedManagedAccountId = isCopilotProvider
     ? selectedGitHubAccountId
     : isCodexAutoProvider
       ? selectedCodexAutoAccountId
+      : isGeminiAutoProvider
+        ? selectedGeminiAutoAccountId
       : null;
 
   const handleSubmit = async (values: ProviderFormData) => {
@@ -824,6 +971,15 @@ export function ProviderForm({
       return;
     }
 
+    if (isGeminiAutoProvider && !isGeminiAutoAuthenticated) {
+      toast.error(
+        t("authCenter.geminiAuto.loginRequired", {
+          defaultValue: "请先登录 Gemini Auto",
+        }),
+      );
+      return;
+    }
+
     if (category !== "official" && category !== "cloud_provider") {
       if (appId === "claude") {
         if (!baseUrl.trim()) {
@@ -868,7 +1024,7 @@ export function ProviderForm({
           );
           return;
         }
-        if (!geminiApiKey.trim()) {
+        if (!isManagedOAuthProvider && !geminiApiKey.trim()) {
           toast.error(
             t("providerForm.apiKeyRequired", {
               defaultValue: "非官方供应商请填写 API Key",
@@ -877,6 +1033,26 @@ export function ProviderForm({
           return;
         }
       }
+    }
+
+    if (
+      appId === "claude" &&
+      managedAuthProvider === "codex_auto" &&
+      [
+        claudeModel,
+        reasoningModel,
+        defaultHaikuModel,
+        defaultSonnetModel,
+        defaultOpusModel,
+      ].some((value) => looksLikeClaudeSourceModel(value))
+    ) {
+      toast.error(
+        t("providerForm.codexAutoSourceModelBlocked", {
+          defaultValue:
+            "Codex Auto 的模型映射里不能填写 Opus / Sonnet / Haiku 这种 Claude 源模型名。这里必须填真实目标模型名，比如 gpt-5.4、gpt-5.4-mini、o3、o4-mini。",
+        }),
+      );
+      return;
     }
 
     let settingsConfig: string;
@@ -947,6 +1123,23 @@ export function ProviderForm({
       settingsConfig = JSON.stringify(omoConfig);
     } else {
       settingsConfig = values.settingsConfig.trim();
+    }
+
+    if (
+      managedAuthProvider === "codex_auto" &&
+      [
+        claudeModel,
+        reasoningModel,
+        defaultHaikuModel,
+        defaultSonnetModel,
+        defaultOpusModel,
+        ...claudeAppExactModelMappings.map((entry) => entry.targetModel),
+      ].some((value) => looksLikeClaudeSourceModel(value))
+    ) {
+      toast.error(
+        "Codex Auto 的目标模型映射里只能填写真实上游模型名，不能再填 Opus / Sonnet / Haiku / claude-* 这类源模型名。",
+      );
+      return;
     }
 
     const payload: ProviderFormValues = {
@@ -1031,6 +1224,12 @@ export function ProviderForm({
 
     const baseMeta: ProviderMeta | undefined =
       payload.meta ?? (initialData?.meta ? { ...initialData.meta } : undefined);
+    const normalizedClaudeAppExactMappings = claudeAppExactModelMappings
+      .map((entry) => ({
+        sourceModel: entry.sourceModel.trim(),
+        targetModel: entry.targetModel.trim(),
+      }))
+      .filter((entry) => entry.sourceModel && entry.targetModel);
 
     // 确定 providerType（新建时从预设获取，编辑时从现有数据获取）
     const providerType =
@@ -1084,6 +1283,19 @@ export function ProviderForm({
         supportsFullUrl && category !== "official" && localIsFullUrl
           ? true
           : undefined,
+      claudeAppExactModelMappings:
+        normalizedClaudeAppExactMappings.length > 0
+          ? normalizedClaudeAppExactMappings
+          : undefined,
+      claudeAppObservedSourceModels:
+        claudeAppObservedSourceModels.length > 0
+          ? claudeAppObservedSourceModels
+          : undefined,
+      claudeAppFetchedTargetModels:
+        claudeAppFetchedTargetModels.length > 0
+          ? claudeAppFetchedTargetModels
+          : undefined,
+      claudeAppModelMapping: undefined,
     };
 
     await onSubmit(payload);
@@ -1530,6 +1742,8 @@ export function ProviderForm({
                 ? setSelectedGitHubAccountId
                 : managedAuthProvider === "codex_auto"
                   ? setSelectedCodexAutoAccountId
+                  : managedAuthProvider === "gemini_auto"
+                    ? setSelectedGeminiAutoAccountId
                   : undefined
             }
             templateValueEntries={templateValueEntries}
@@ -1560,6 +1774,32 @@ export function ProviderForm({
             onApiKeyFieldChange={handleApiKeyFieldChange}
             isFullUrl={localIsFullUrl}
             onFullUrlChange={setLocalIsFullUrl}
+            claudeAppExactModelMappings={claudeAppExactModelMappings}
+            onClaudeAppExactModelMappingChange={
+              handleClaudeAppExactModelMappingChange
+            }
+            onAddClaudeAppExactModelMapping={
+              handleAddClaudeAppExactModelMapping
+            }
+            onRemoveClaudeAppExactModelMapping={
+              handleRemoveClaudeAppExactModelMapping
+            }
+            claudeAppObservedSourceModels={claudeAppObservedSourceModels}
+            claudeAppFetchedTargetModels={claudeAppFetchedTargetModels}
+            isFetchingClaudeAppTargetModels={isFetchingClaudeAppTargetModels}
+            isRefreshingClaudeAppObservedModels={
+              isRefreshingClaudeAppObservedModels
+            }
+            onFetchClaudeAppTargetModels={handleFetchClaudeAppTargetModels}
+            onRefreshClaudeAppObservedModels={
+              handleRefreshClaudeAppObservedModels
+            }
+            onClearClaudeAppObservedModels={
+              handleClearClaudeAppObservedModels
+            }
+            onClearClaudeAppFetchedTargetModels={
+              handleClearClaudeAppFetchedTargetModels
+            }
           />
         )}
 
@@ -1598,7 +1838,7 @@ export function ProviderForm({
             shouldShowApiKey={shouldShowApiKey(
               form.getValues("settingsConfig"),
               isEditMode,
-            )}
+            ) && !isGeminiAutoProvider}
             apiKey={geminiApiKey}
             onApiKeyChange={handleGeminiApiKeyChange}
             category={category}
@@ -1618,6 +1858,16 @@ export function ProviderForm({
             model={geminiModel}
             onModelChange={handleGeminiModelChange}
             speedTestEndpoints={speedTestEndpoints}
+            managedAuthProvider={
+              managedAuthProvider === "gemini_auto" ? "gemini_auto" : null
+            }
+            isManagedAuthAuthenticated={isManagedAuthAuthenticated}
+            selectedManagedAccountId={selectedManagedAccountId}
+            onManagedAccountSelect={
+              managedAuthProvider === "gemini_auto"
+                ? setSelectedGeminiAutoAccountId
+                : undefined
+            }
           />
         )}
 

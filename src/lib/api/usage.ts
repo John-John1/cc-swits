@@ -14,10 +14,16 @@ import type { UsageResult } from "@/types";
 import type { AppId } from "./types";
 import type { TemplateType } from "@/config/constants";
 
+const getProviderSourceApp = (appId: AppId): AppId =>
+  appId === "claudeApp" ? "claude" : appId;
+
 export const usageApi = {
   // Provider usage script methods
   query: async (providerId: string, appId: AppId): Promise<UsageResult> => {
-    return invoke("queryProviderUsage", { providerId, app: appId });
+    return invoke("queryProviderUsage", {
+      providerId,
+      app: getProviderSourceApp(appId),
+    });
   },
 
   testScript: async (
@@ -33,7 +39,7 @@ export const usageApi = {
   ): Promise<UsageResult> => {
     return invoke("testUsageScript", {
       providerId,
-      app: appId,
+      app: getProviderSourceApp(appId),
       scriptCode,
       timeout,
       apiKey,

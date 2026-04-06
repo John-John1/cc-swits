@@ -85,13 +85,16 @@ impl RequestContext {
         app_type: AppType,
         tag: &'static str,
         app_type_str: &'static str,
+        proxy_config_key: &'static str,
+        provider_source_key: &'static str,
+        current_provider_key: &'static str,
     ) -> Result<Self, ProxyError> {
         let start_time = Instant::now();
 
         // 从数据库读取应用级代理配置（per-app）
         let app_config = state
             .db
-            .get_proxy_config_for_app(app_type_str)
+            .get_proxy_config_for_app(proxy_config_key)
             .await
             .map_err(|e| ProxyError::DatabaseError(e.to_string()))?;
 
@@ -101,7 +104,8 @@ impl RequestContext {
         let copilot_optimizer_config = state.db.get_copilot_optimizer_config().unwrap_or_default();
 
         let current_provider_id =
-            crate::settings::get_current_provider(&app_type).unwrap_or_default();
+            crate::settings::get_current_provider_for_key(current_provider_key)
+                .unwrap_or_default();
 
         // 从请求体提取模型名称
         let request_model = body
@@ -126,7 +130,12 @@ impl RequestContext {
         // 注意：只在这里调用一次，结果传递给 forwarder，避免重复消耗 HalfOpen 名额
         let providers = state
             .provider_router
-            .select_providers(app_type_str)
+            .select_providers_for_keys(
+                app_type_str,
+                provider_source_key,
+                current_provider_key,
+                proxy_config_key,
+            )
             .await
             .map_err(|e| match e {
                 crate::error::AppError::AllProvidersCircuitOpen => {
@@ -177,13 +186,14 @@ impl RequestContext {
             .map(|pq| pq.as_str())
             .unwrap_or(uri.path());
 
-        self.request_model = endpoint
+        if let Some(model) = endpoint
             .split('/')
             .find(|s| s.starts_with("models/"))
             .and_then(|s| s.strip_prefix("models/"))
             .map(|s| s.split(':').next().unwrap_or(s))
-            .unwrap_or("unknown")
-            .to_string();
+        {
+            self.request_model = model.to_string();
+        }
 
         self
     }

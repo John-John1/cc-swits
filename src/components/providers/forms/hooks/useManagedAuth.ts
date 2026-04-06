@@ -75,7 +75,7 @@ export function useManagedAuth(authProvider: ManagedAuthProvider) {
       // Add a small buffer on top of GitHub's suggested interval to avoid
       // hitting slow_down responses too aggressively during device polling.
       const interval =
-        authProvider === "codex_auto"
+        authProvider === "codex_auto" || authProvider === "gemini_auto"
           ? Math.max(response.interval || 2, 2) * 1000
           : Math.max((response.interval || 5) + 3, 8) * 1000;
       const expiresAt = Date.now() + response.expires_in * 1000;

@@ -1,9 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
-import type {
-  ProviderPreset,
-  TemplateValueConfig,
-} from "@/config/claudeProviderPresets";
-import type { CodexProviderPreset } from "@/config/codexProviderPresets";
+import type { ProviderPreset, TemplateValueConfig } from "@/config/claudeProviderPresets";
 import { applyTemplateValues } from "@/utils/providerConfigUtils";
 
 type TemplatePath = Array<string | number>;
@@ -11,7 +7,7 @@ type TemplateValueMap = Record<string, TemplateValueConfig>;
 
 interface PresetEntry {
   id: string;
-  preset: ProviderPreset | CodexProviderPreset;
+  preset: object;
 }
 
 interface UseTemplateValuesProps {
@@ -178,7 +174,7 @@ export function useTemplateValues({
     const entry = presetEntries.find((item) => item.id === selectedPresetId);
     // 只处理 ProviderPreset (Claude 预设)
     if (entry && "settingsConfig" in entry.preset) {
-      return entry.preset as ProviderPreset;
+      return entry.preset as unknown as ProviderPreset;
     }
     return null;
   }, [selectedPresetId, presetEntries]);

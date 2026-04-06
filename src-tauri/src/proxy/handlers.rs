@@ -79,8 +79,18 @@ pub async fn handle_messages(
     let body: Value = serde_json::from_slice(&body_bytes)
         .map_err(|e| ProxyError::Internal(format!("Failed to parse request body: {e}")))?;
 
-    let mut ctx =
-        RequestContext::new(&state, &body, &headers, AppType::Claude, "Claude", "claude").await?;
+    let mut ctx = RequestContext::new(
+        &state,
+        &body,
+        &headers,
+        AppType::Claude,
+        "Claude",
+        "claude",
+        "claude",
+        "claude",
+        "claude",
+    )
+    .await?;
 
     let endpoint = uri
         .path_and_query()
@@ -134,6 +144,159 @@ pub async fn handle_messages(
     }
 
     // 通用响应处理（透传模式）
+    process_response(response, &ctx, &state, &CLAUDE_PARSER_CONFIG).await
+}
+
+pub async fn handle_claude_app_messages(
+    State(state): State<ProxyState>,
+    request: axum::extract::Request,
+) -> Result<axum::response::Response, ProxyError> {
+    let (parts, body) = request.into_parts();
+    let uri = parts.uri;
+    let headers = parts.headers;
+    let extensions = parts.extensions;
+    let body_bytes = body
+        .collect()
+        .await
+        .map_err(|e| ProxyError::Internal(format!("Failed to read request body: {e}")))?
+        .to_bytes();
+    let mut body: Value = serde_json::from_slice(&body_bytes)
+        .map_err(|e| ProxyError::Internal(format!("Failed to parse request body: {e}")))?;
+
+    let original_model = body
+        .get("model")
+        .and_then(|model| model.as_str())
+        .map(ToString::to_string);
+    if let (Some(provider_id), Some(model)) = (
+        crate::services::claude_app::active_wrapper_provider_id(),
+        original_model.as_deref(),
+    ) {
+        if let Err(err) = crate::services::claude_app::ClaudeAppBridgeService::record_observed_source_model(
+            state.db.as_ref(),
+            &provider_id,
+            model,
+        ) {
+            log::warn!(
+                "[Claude App] failed to persist observed source model for provider={provider_id}: {err}"
+            );
+        }
+    }
+    if let Some(target_model) =
+        crate::services::claude_app::active_wrapper_target_model_for_body(&body)
+    {
+        body["model"] = json!(target_model);
+    }
+
+    let mut ctx = RequestContext::new(
+        &state,
+        &body,
+        &headers,
+        AppType::Claude,
+        "Claude App",
+        "claude_app",
+        "claude",
+        "claude",
+        "claude_app",
+    )
+    .await?;
+
+    let endpoint = uri
+        .path_and_query()
+        .map(|path_and_query| path_and_query.as_str())
+        .unwrap_or(uri.path());
+
+    let is_stream = body
+        .get("stream")
+        .and_then(|s| s.as_bool())
+        .unwrap_or(false);
+
+    let message_count = body
+        .get("messages")
+        .and_then(|messages| messages.as_array())
+        .map(|messages| messages.len())
+        .unwrap_or(0);
+    let system_present = body.get("system").is_some();
+
+    log::info!(
+        "[Claude App] route hit: endpoint={endpoint}, session={}, provider={}, request_model={}, original_model={}, stream={}, messages={}, system={}",
+        ctx.session_id,
+        ctx.provider.id,
+        ctx.request_model,
+        original_model.as_deref().unwrap_or("unknown"),
+        is_stream,
+        message_count,
+        system_present
+    );
+
+    let forwarder = ctx.create_forwarder(&state);
+    let result = match forwarder
+        .forward_with_retry(
+            &AppType::Claude,
+            endpoint,
+            body.clone(),
+            headers,
+            extensions,
+            ctx.get_providers(),
+        )
+        .await
+    {
+        Ok(result) => result,
+        Err(mut err) => {
+            if let Some(provider) = err.provider.take() {
+                ctx.provider = provider;
+            }
+            log::error!(
+                "[Claude App] forward failed: endpoint={endpoint}, session={}, provider={}, request_model={}, stream={}, error={}",
+                ctx.session_id,
+                ctx.provider.id,
+                ctx.request_model,
+                is_stream,
+                err.error
+            );
+            log_forward_error(&state, &ctx, is_stream, &err.error);
+            return Err(err.error);
+        }
+    };
+
+    ctx.provider = result.provider;
+    let api_format = result
+        .claude_api_format
+        .as_deref()
+        .unwrap_or_else(|| get_claude_api_format(&ctx.provider))
+        .to_string();
+    let response = result.response;
+    let upstream_status = response.status().as_u16();
+
+    log::info!(
+        "[Claude App] upstream response: endpoint={endpoint}, session={}, provider={}, request_model={}, api_format={}, status={}",
+        ctx.session_id,
+        ctx.provider.id,
+        ctx.request_model,
+        api_format,
+        upstream_status
+    );
+
+    let adapter = get_adapter(&AppType::Claude);
+    let needs_transform = adapter.needs_transform(&ctx.provider);
+
+    if needs_transform {
+        log::info!(
+            "[Claude App] transforming upstream response to Anthropic format: session={}, provider={}, api_format={}",
+            ctx.session_id,
+            ctx.provider.id,
+            api_format
+        );
+        return handle_claude_transform(response, &ctx, &state, &body, is_stream, &api_format)
+            .await;
+    }
+
+    log::info!(
+        "[Claude App] passthrough response: session={}, provider={}, status={}",
+        ctx.session_id,
+        ctx.provider.id,
+        upstream_status
+    );
+
     process_response(response, &ctx, &state, &CLAUDE_PARSER_CONFIG).await
 }
 
@@ -334,8 +497,18 @@ pub async fn handle_chat_completions(
     let body: Value = serde_json::from_slice(&body_bytes)
         .map_err(|e| ProxyError::Internal(format!("Failed to parse request body: {e}")))?;
 
-    let mut ctx =
-        RequestContext::new(&state, &body, &headers, AppType::Codex, "Codex", "codex").await?;
+    let mut ctx = RequestContext::new(
+        &state,
+        &body,
+        &headers,
+        AppType::Codex,
+        "Codex",
+        "codex",
+        "codex",
+        "codex",
+        "codex",
+    )
+    .await?;
     let endpoint = endpoint_with_query(&uri, "/chat/completions");
 
     let is_stream = body
@@ -388,8 +561,18 @@ pub async fn handle_responses(
     let body: Value = serde_json::from_slice(&body_bytes)
         .map_err(|e| ProxyError::Internal(format!("Failed to parse request body: {e}")))?;
 
-    let mut ctx =
-        RequestContext::new(&state, &body, &headers, AppType::Codex, "Codex", "codex").await?;
+    let mut ctx = RequestContext::new(
+        &state,
+        &body,
+        &headers,
+        AppType::Codex,
+        "Codex",
+        "codex",
+        "codex",
+        "codex",
+        "codex",
+    )
+    .await?;
     let endpoint = endpoint_with_query(&uri, "/responses");
 
     let is_stream = body
@@ -442,8 +625,18 @@ pub async fn handle_responses_compact(
     let body: Value = serde_json::from_slice(&body_bytes)
         .map_err(|e| ProxyError::Internal(format!("Failed to parse request body: {e}")))?;
 
-    let mut ctx =
-        RequestContext::new(&state, &body, &headers, AppType::Codex, "Codex", "codex").await?;
+    let mut ctx = RequestContext::new(
+        &state,
+        &body,
+        &headers,
+        AppType::Codex,
+        "Codex",
+        "codex",
+        "codex",
+        "codex",
+        "codex",
+    )
+    .await?;
     let endpoint = endpoint_with_query(&uri, "/responses/compact");
 
     let is_stream = body
@@ -501,9 +694,19 @@ pub async fn handle_gemini(
         .map_err(|e| ProxyError::Internal(format!("Failed to parse request body: {e}")))?;
 
     // Gemini 的模型名称在 URI 中
-    let mut ctx = RequestContext::new(&state, &body, &headers, AppType::Gemini, "Gemini", "gemini")
-        .await?
-        .with_model_from_uri(&uri);
+    let mut ctx = RequestContext::new(
+        &state,
+        &body,
+        &headers,
+        AppType::Gemini,
+        "Gemini",
+        "gemini",
+        "gemini",
+        "gemini",
+        "gemini",
+    )
+    .await?
+    .with_model_from_uri(&uri);
 
     // 提取完整的路径和查询参数
     let endpoint = uri

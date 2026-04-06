@@ -26,6 +26,7 @@ import { openclawKeys } from "@/hooks/useOpenClaw";
 export function useProviderActions(activeApp: AppId, isProxyRunning?: boolean) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
+  const providerSourceApp = activeApp === "claudeApp" ? "claude" : activeApp;
 
   const addProviderMutation = useAddProviderMutation(activeApp);
   const updateProviderMutation = useUpdateProviderMutation(activeApp);
@@ -141,7 +142,7 @@ export function useProviderActions(activeApp: AppId, isProxyRunning?: boolean) {
   const switchProvider = useCallback(
     async (provider: Provider) => {
       const isCopilotProvider =
-        activeApp === "claude" &&
+        providerSourceApp === "claude" &&
         provider.meta?.providerType === "github_copilot";
 
       // Determine why this provider requires the proxy
@@ -153,21 +154,21 @@ export function useProviderActions(activeApp: AppId, isProxyRunning?: boolean) {
           });
         } else if (
           provider.meta?.apiFormat === "openai_chat" &&
-          activeApp === "claude"
+          providerSourceApp === "claude"
         ) {
           proxyRequiredReason = t("notifications.proxyReasonOpenAIChat", {
             defaultValue: "使用 OpenAI Chat 接口格式",
           });
         } else if (
           provider.meta?.apiFormat === "openai_responses" &&
-          activeApp === "claude"
+          providerSourceApp === "claude"
         ) {
           proxyRequiredReason = t("notifications.proxyReasonOpenAIResponses", {
             defaultValue: "使用 OpenAI Responses 接口格式",
           });
         } else if (
           provider.meta?.isFullUrl &&
-          (activeApp === "claude" || activeApp === "codex")
+          (providerSourceApp === "claude" || providerSourceApp === "codex")
         ) {
           proxyRequiredReason = t("notifications.proxyReasonFullUrl", {
             defaultValue: "开启了完整 URL 连接模式",
@@ -203,7 +204,7 @@ export function useProviderActions(activeApp: AppId, isProxyRunning?: boolean) {
         // 根据供应商类型显示不同的成功提示
         if (
           !proxyRequiredReason &&
-          activeApp === "claude" &&
+          providerSourceApp === "claude" &&
           provider.category !== "official" &&
           (isCopilotProvider ||
             provider.meta?.apiFormat === "openai_chat" ||
@@ -239,7 +240,14 @@ export function useProviderActions(activeApp: AppId, isProxyRunning?: boolean) {
         // 错误提示由 mutation 处理
       }
     },
-    [switchProviderMutation, syncClaudePlugin, activeApp, isProxyRunning, t],
+    [
+      switchProviderMutation,
+      syncClaudePlugin,
+      activeApp,
+      isProxyRunning,
+      providerSourceApp,
+      t,
+    ],
   );
 
   // 删除供应商

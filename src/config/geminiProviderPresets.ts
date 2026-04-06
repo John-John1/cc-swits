@@ -26,6 +26,7 @@ export interface GeminiProviderPreset {
   partnerPromotionKey?: string;
   endpointCandidates?: string[];
   theme?: GeminiPresetTheme;
+  providerType?: string;
   // 图标配置
   icon?: string; // 图标名称
   iconColor?: string; // 图标颜色
@@ -35,13 +36,18 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
   {
     name: "Google Official",
     websiteUrl: "https://ai.google.dev/",
-    apiKeyUrl: "https://aistudio.google.com/apikey",
     settingsConfig: {
-      env: {},
+      env: {
+        GOOGLE_GEMINI_BASE_URL: "https://cloudcode-pa.googleapis.com",
+        GEMINI_MODEL: "gemini-2.5-pro",
+      },
     },
+    baseURL: "https://cloudcode-pa.googleapis.com",
+    model: "gemini-2.5-pro",
     description: "Google 官方 Gemini API (OAuth)",
     category: "official",
     partnerPromotionKey: "google-official",
+    providerType: "gemini_auto",
     theme: {
       icon: "gemini",
       backgroundColor: "#4285F4",

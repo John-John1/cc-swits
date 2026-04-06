@@ -287,6 +287,10 @@ impl ProxyServer {
             // Claude API (支持带前缀和不带前缀两种格式)
             .route("/v1/messages", post(handlers::handle_messages))
             .route("/claude/v1/messages", post(handlers::handle_messages))
+            .route(
+                "/claude-app/v1/messages",
+                post(handlers::handle_claude_app_messages),
+            )
             // OpenAI Chat Completions API (Codex CLI，支持带前缀和不带前缀)
             .route("/chat/completions", post(handlers::handle_chat_completions))
             .route(
@@ -326,6 +330,38 @@ impl ProxyServer {
             // Gemini API (支持带前缀和不带前缀)
             .route("/v1beta/*path", post(handlers::handle_gemini))
             .route("/gemini/v1beta/*path", post(handlers::handle_gemini))
+            .route(
+                "/v1internal:generateContent",
+                post(handlers::handle_gemini),
+            )
+            .route(
+                "/v1internal:streamGenerateContent",
+                post(handlers::handle_gemini),
+            )
+            .route(
+                "/v1internal:loadCodeAssist",
+                post(handlers::handle_gemini),
+            )
+            .route(
+                "/v1internal:retrieveUserQuota",
+                post(handlers::handle_gemini),
+            )
+            .route(
+                "/gemini/v1internal:generateContent",
+                post(handlers::handle_gemini),
+            )
+            .route(
+                "/gemini/v1internal:streamGenerateContent",
+                post(handlers::handle_gemini),
+            )
+            .route(
+                "/gemini/v1internal:loadCodeAssist",
+                post(handlers::handle_gemini),
+            )
+            .route(
+                "/gemini/v1internal:retrieveUserQuota",
+                post(handlers::handle_gemini),
+            )
             // 提高默认请求体大小限制（避免 413 Payload Too Large）
             .layer(DefaultBodyLimit::max(200 * 1024 * 1024))
             .layer(cors)

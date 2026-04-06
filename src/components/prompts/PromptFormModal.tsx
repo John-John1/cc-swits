@@ -29,9 +29,11 @@ const PromptFormModal: React.FC<PromptFormModalProps> = ({
   onClose,
 }) => {
   const { t } = useTranslation();
-  const appName = t(`apps.${appId}`);
+  const appName =
+    appId === "claudeApp" ? "Claude App" : t(`apps.${appId}`);
   const filenameMap: Record<Exclude<AppId, "openclaw">, string> = {
     claude: "CLAUDE.md",
+    claudeApp: "CLAUDE.md",
     codex: "AGENTS.md",
     gemini: "GEMINI.md",
     opencode: "AGENTS.md",

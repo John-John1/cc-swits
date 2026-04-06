@@ -220,6 +220,11 @@ export const useSwitchProviderMutation = (appId: AppId) => {
     },
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["providers", appId] });
+      if (appId === "claudeApp") {
+        await queryClient.invalidateQueries({
+          queryKey: ["claudeAppBridgeStatus"],
+        });
+      }
 
       // OpenCode/OpenClaw: also invalidate live provider IDs cache to update button state
       if (appId === "opencode") {

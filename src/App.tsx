@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { toast } from "sonner";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Plus,
   Settings,
@@ -28,6 +28,7 @@ import { useProvidersQuery, useSettingsQuery } from "@/lib/query";
 import {
   providersApi,
   settingsApi,
+  claudeAppApi,
   type AppId,
   type ProviderSwitchEvent,
 } from "@/lib/api";
@@ -71,6 +72,7 @@ import EnvPanel from "@/components/openclaw/EnvPanel";
 import ToolsPanel from "@/components/openclaw/ToolsPanel";
 import AgentsDefaultsPanel from "@/components/openclaw/AgentsDefaultsPanel";
 import OpenClawHealthBanner from "@/components/openclaw/OpenClawHealthBanner";
+import { ClaudeAppBridgeBanner } from "@/components/claude/ClaudeAppBridgeBanner";
 
 type View =
   | "providers"
@@ -100,6 +102,7 @@ const CONTENT_TOP_OFFSET = DRAG_BAR_HEIGHT + HEADER_HEIGHT;
 const STORAGE_KEY = "cc-switch-last-app";
 const VALID_APPS: AppId[] = [
   "claude",
+  "claudeApp",
   "codex",
   "gemini",
   "opencode",
@@ -147,6 +150,8 @@ function App() {
   const [currentView, setCurrentView] = useState<View>(getInitialView);
   const [settingsDefaultTab, setSettingsDefaultTab] = useState("general");
   const [isAddOpen, setIsAddOpen] = useState(false);
+  const providerSourceApp: AppId =
+    activeApp === "claudeApp" ? "claude" : activeApp;
 
   useEffect(() => {
     localStorage.setItem(VIEW_STORAGE_KEY, currentView);
@@ -155,6 +160,7 @@ function App() {
   const { data: settingsData } = useSettingsQuery();
   const visibleApps: VisibleApps = settingsData?.visibleApps ?? {
     claude: true,
+    claudeApp: true,
     codex: true,
     gemini: true,
     opencode: true,
@@ -163,6 +169,7 @@ function App() {
 
   const getFirstVisibleApp = (): AppId => {
     if (visibleApps.claude) return "claude";
+    if (visibleApps.claudeApp) return "claudeApp";
     if (visibleApps.codex) return "codex";
     if (visibleApps.gemini) return "gemini";
     if (visibleApps.opencode) return "opencode";
@@ -217,13 +224,16 @@ function App() {
     takeoverStatus,
     status: proxyStatus,
   } = useProxyStatus();
-  const isCurrentAppTakeoverActive = takeoverStatus?.[activeApp] || false;
+  const isCurrentAppTakeoverActive =
+    activeApp === "claudeApp"
+      ? false
+      : takeoverStatus?.[providerSourceApp] || false;
   const activeProviderId = useMemo(() => {
     const target = proxyStatus?.active_targets?.find(
-      (t) => t.app_type === activeApp,
+      (t) => t.app_type === providerSourceApp,
     );
     return target?.provider_id;
-  }, [proxyStatus?.active_targets, activeApp]);
+  }, [proxyStatus?.active_targets, providerSourceApp]);
 
   const { data, isLoading, refetch } = useProvidersQuery(activeApp, {
     isProxyRunning,
@@ -256,6 +266,28 @@ function App() {
     saveUsageScript,
     setAsDefaultModel,
   } = useProviderActions(activeApp, isProxyRunning);
+  const {
+    data: claudeAppBridgeStatus,
+    isLoading: isClaudeAppBridgeLoading,
+  } = useQuery({
+    queryKey: ["claudeAppBridgeStatus"],
+    queryFn: () => claudeAppApi.getStatus(),
+    enabled: activeApp === "claudeApp",
+    refetchInterval: activeApp === "claudeApp" ? 2000 : false,
+    placeholderData: (previous) => previous,
+  });
+  const stopClaudeAppBridgeMutation = useMutation({
+    mutationFn: () => claudeAppApi.stopBridge(),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({
+        queryKey: ["claudeAppBridgeStatus"],
+      });
+      await queryClient.invalidateQueries({
+        queryKey: ["providers", "claudeApp"],
+      });
+    },
+  });
+  const isClaudeAppTakeoverActive = Boolean(claudeAppBridgeStatus?.running);
 
   const disableOmoMutation = useDisableCurrentOmo();
   const handleDisableOmo = () => {
@@ -298,7 +330,7 @@ function App() {
       try {
         unsubscribe = await providersApi.onSwitched(
           async (event: ProviderSwitchEvent) => {
-            if (event.appType === activeApp) {
+            if (event.appType === providerSourceApp) {
               await refetch();
             }
           },
@@ -312,7 +344,7 @@ function App() {
     return () => {
       unsubscribe?.();
     };
-  }, [activeApp, refetch]);
+  }, [providerSourceApp, refetch]);
 
   useEffect(() => {
     let unsubscribe: (() => void) | undefined;
@@ -459,7 +491,7 @@ function App() {
   useEffect(() => {
     const checkEnvOnSwitch = async () => {
       try {
-        const conflicts = await checkEnvConflicts(activeApp);
+        const conflicts = await checkEnvConflicts(providerSourceApp);
 
         if (conflicts.length > 0) {
           setEnvConflicts((prev) => {
@@ -485,7 +517,7 @@ function App() {
     };
 
     checkEnvOnSwitch();
-  }, [activeApp]);
+  }, [providerSourceApp]);
 
   const currentViewRef = useRef(currentView);
 
@@ -551,7 +583,7 @@ function App() {
     if (action === "remove") {
       // Remove from live config only (for additive mode apps like OpenCode/OpenClaw)
       // Does NOT delete from database - provider remains in the list
-      await providersApi.removeFromLiveConfig(provider.id, activeApp);
+      await providersApi.removeFromLiveConfig(provider.id, providerSourceApp);
       // Invalidate queries to refresh the isInConfig state
       if (activeApp === "opencode") {
         await queryClient.invalidateQueries({
@@ -665,7 +697,7 @@ function App() {
 
       if (updates.length > 0) {
         try {
-          await providersApi.updateSortOrder(updates, activeApp);
+          await providersApi.updateSortOrder(updates, providerSourceApp);
         } catch (error) {
           console.error("[App] Failed to update sort order", error);
           toast.error(
@@ -688,7 +720,7 @@ function App() {
         return;
       }
 
-      await providersApi.openTerminal(provider.id, activeApp, {
+      await providersApi.openTerminal(provider.id, providerSourceApp, {
         cwd: selectedDir,
       });
       toast.success(
@@ -746,7 +778,7 @@ function App() {
               ref={promptPanelRef}
               open={true}
               onOpenChange={() => setCurrentView("providers")}
-              appId={activeApp}
+              appId={providerSourceApp}
             />
           );
         case "skills":
@@ -754,14 +786,18 @@ function App() {
             <UnifiedSkillsPanel
               ref={unifiedSkillsPanelRef}
               onOpenDiscovery={() => setCurrentView("skillsDiscovery")}
-              currentApp={activeApp === "openclaw" ? "claude" : activeApp}
+              currentApp={
+                providerSourceApp === "openclaw" ? "claude" : providerSourceApp
+              }
             />
           );
         case "skillsDiscovery":
           return (
             <SkillsPage
               ref={skillsPageRef}
-              initialApp={activeApp === "openclaw" ? "claude" : activeApp}
+              initialApp={
+                providerSourceApp === "openclaw" ? "claude" : providerSourceApp
+              }
             />
           );
         case "mcp":
@@ -805,14 +841,24 @@ function App() {
                     transition={{ duration: 0.15 }}
                     className="space-y-4"
                   >
+                    {activeApp === "claudeApp" && (
+                      <ClaudeAppBridgeBanner
+                        status={claudeAppBridgeStatus}
+                        isLoading={isClaudeAppBridgeLoading}
+                        isStopping={stopClaudeAppBridgeMutation.isPending}
+                        onStop={() => stopClaudeAppBridgeMutation.mutate()}
+                      />
+                    )}
                     <ProviderList
                       providers={providers}
                       currentProviderId={currentProviderId}
-                      appId={activeApp}
+                      appId={providerSourceApp}
                       isLoading={isLoading}
                       isProxyRunning={isProxyRunning}
                       isProxyTakeover={
-                        isProxyRunning && isCurrentAppTakeoverActive
+                        activeApp === "claudeApp"
+                          ? isClaudeAppTakeoverActive
+                          : isProxyRunning && isCurrentAppTakeoverActive
                       }
                       activeProviderId={activeProviderId}
                       onSwitch={switchProvider}
@@ -945,7 +991,12 @@ function App() {
                 <h1 className="text-lg font-semibold">
                   {currentView === "settings" && t("settings.title")}
                   {currentView === "prompts" &&
-                    t("prompts.title", { appName: t(`apps.${activeApp}`) })}
+                    t("prompts.title", {
+                      appName:
+                        activeApp === "claudeApp"
+                          ? "Claude App"
+                          : t(`apps.${activeApp}`),
+                    })}
                   {currentView === "skills" && t("skills.title")}
                   {currentView === "skillsDiscovery" && t("skills.title")}
                   {currentView === "mcp" && t("mcp.unifiedPanel.title")}
@@ -1019,6 +1070,7 @@ function App() {
 
           <div className="flex flex-1 min-w-0 items-center justify-end gap-1.5">
             {currentView === "providers" &&
+              activeApp !== "claudeApp" &&
               activeApp !== "opencode" &&
               activeApp !== "openclaw" && (
                 <div
@@ -1292,7 +1344,7 @@ function App() {
       <AddProviderDialog
         open={isAddOpen}
         onOpenChange={setIsAddOpen}
-        appId={activeApp}
+        appId={providerSourceApp}
         onSubmit={addProvider}
       />
 
@@ -1305,15 +1357,19 @@ function App() {
           }
         }}
         onSubmit={handleEditProvider}
-        appId={activeApp}
-        isProxyTakeover={isProxyRunning && isCurrentAppTakeoverActive}
+        appId={providerSourceApp}
+        isProxyTakeover={
+          activeApp === "claudeApp"
+            ? true
+            : isProxyRunning && isCurrentAppTakeoverActive
+        }
       />
 
       {effectiveUsageProvider && (
         <UsageScriptModal
           key={effectiveUsageProvider.id}
           provider={effectiveUsageProvider}
-          appId={activeApp}
+          appId={providerSourceApp}
           isOpen={Boolean(usageProvider)}
           onClose={() => setUsageProvider(null)}
           onSave={(script) => {

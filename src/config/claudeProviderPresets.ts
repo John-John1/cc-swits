@@ -54,7 +54,7 @@ export interface ProviderPreset {
   // 供应商类型标识（用于特殊供应商检测）
   // - "github_copilot": GitHub Copilot 供应商（需要 OAuth 认证）
   // - "codex_auto": OpenAI Codex OAuth 供应商（需要 OAuth 认证）
-  providerType?: "github_copilot" | "codex_auto";
+  providerType?: "github_copilot" | "codex_auto" | "gemini_auto";
 
   // 是否需要 OAuth 认证（而非 API Key）
   requiresOAuth?: boolean;
@@ -712,11 +712,11 @@ export const providerPresets: ProviderPreset[] = [
   {
     name: "Codex Auto",
     websiteUrl: "https://chatgpt.com/codex",
-      settingsConfig: {
-        env: {
-          ANTHROPIC_BASE_URL: "https://chatgpt.com/backend-api/codex",
-          ANTHROPIC_AUTH_TOKEN: "",
-          ANTHROPIC_MODEL: "gpt-5.4",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://chatgpt.com/backend-api/codex",
+        ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_MODEL: "gpt-5.4",
         ANTHROPIC_DEFAULT_HAIKU_MODEL: "gpt-5.4-mini",
         ANTHROPIC_DEFAULT_SONNET_MODEL: "gpt-5.4",
         ANTHROPIC_DEFAULT_OPUS_MODEL: "gpt-5.4",
@@ -728,6 +728,26 @@ export const providerPresets: ProviderPreset[] = [
     requiresOAuth: true,
     icon: "openai",
     iconColor: "#00A67E",
+  },
+  {
+    name: "Gemini Auto",
+    websiteUrl: "https://gemini.google.com/",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://cloudcode-pa.googleapis.com",
+        ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_MODEL: "gemini-2.5-pro",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "gemini-2.5-flash",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "gemini-2.5-pro",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "gemini-2.5-pro",
+        ANTHROPIC_REASONING_MODEL: "gemini-2.5-pro",
+      },
+    },
+    category: "third_party",
+    providerType: "gemini_auto",
+    requiresOAuth: true,
+    icon: "gemini",
+    iconColor: "#4285F4",
   },
   {
     name: "Nvidia",
